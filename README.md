@@ -1,3 +1,3 @@
 # Streamstiny
 
-A native Destiny.gg chat and video app for iPhone and iPad running iOS 17 or later.
+A native Destiny.gg chat and video application for iOS 17 and later.
