@@ -1,10 +1,10 @@
 Streamstiny is Copyright 2026 EscapeAltDelete and licensed under GNU GPL version 3 only (GPL-3.0-only).
-This build uses KSPlayer 2.3.4 (GPLv3) and FFmpegKit 6.1.3 (GPLv3), including native codec components.
+This build uses KSPlayer 2.3.4 (GPLv3) and FFmpegKit 6.1.4 (GPLv3), including native codec components.
 Corresponding Streamstiny build sources and build instructions are available to recipients at:
 https://github.com/EscapeAltDelete/Streamstiny
 Dependency source and pinned build recipes:
 https://github.com/kingslay/KSPlayer/tree/2.3.4
-https://github.com/kingslay/FFmpegKit/tree/6.1.3
+https://github.com/kingslay/FFmpegKit/tree/6.1.4
 KSPlayer includes audio-selection and render-buffer fixes in scripts/patch_playback.py in the Streamstiny repository.
 The included license texts apply to their respective components and portions derived from them.
 When distributing the application, provide the corresponding source code, including the playback fixes and build scripts, under the applicable GPLv3 terms.
