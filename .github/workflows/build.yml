@@ -13,24 +13,25 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: build-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
-    if: ${{ github.repository == '2872636/Streamstiny-Builds' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository == 'EscapeAltDelete/Streamstiny' && github.ref == 'refs/heads/main' }}
     runs-on: macos-15
     timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      # Bump when changing the runner, SDK, toolchain, or cache layout.
+      BUILD_CACHE_VERSION: v2-arm64-macos15-xcode16.4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Cache validated package for this commit
+      - name: Cache validated package for these build inputs
         id: package
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/Streamstiny.tipa
-          key: tipa-arm64-macos15-xcode16.4-${{ github.sha }}
-      - name: Select Xcode
-        if: steps.package.outputs.cache-hit != 'true'
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          key: tipa-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('Streamstiny/**', 'scripts/**', 'project.yml', 'dependencies.yml', '.github/workflows/build.yml', '.gitattributes') }}
       - name: Cache verified XcodeGen archive
         if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -54,7 +55,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/SourcePackages
-          key: swiftpackages-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+          key: swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
       - name: Cache compiled release products
         if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -63,22 +64,25 @@ jobs:
             build/device/Build
             build/device/ModuleCache.noindex
             build/device/SDKStatCaches.noindex
-            build/Package.resolved
-          key: release-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-${{ hashFiles('project.yml', 'Streamstiny/**') }}
-          restore-keys: release-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-
+            build/device/ci-inputs.json
+          key: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-${{ hashFiles('project.yml', 'Streamstiny/**') }}
+          restore-keys: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-
       - name: Build optimized ARM64 Release
         if: steps.package.outputs.cache-hit != 'true'
         run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
           RESOLVED="Streamstiny.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-          if [ "${{ steps.packages.outputs.cache-hit }}" = "true" ] && [ -f build/Package.resolved ]; then
+          if [ "${{ steps.packages.outputs.cache-hit }}" = "true" ] && [ -f build/SourcePackages/Package.resolved ]; then
             mkdir -p "$(dirname "$RESOLVED")"
-            cp build/Package.resolved "$RESOLVED"
+            cp build/SourcePackages/Package.resolved "$RESOLVED"
           else
             xcodebuild -resolvePackageDependencies -project Streamstiny.xcodeproj -scheme Streamstiny -clonedSourcePackagesDirPath build/SourcePackages -skipPackageUpdates
-            cp "$RESOLVED" build/Package.resolved
+            cp "$RESOLVED" build/SourcePackages/Package.resolved
           fi
           python3 scripts/patch_playback.py
-          xcodebuild build -project Streamstiny.xcodeproj -scheme Streamstiny -configuration Release -destination 'generic/platform=iOS' -clonedSourcePackagesDirPath build/SourcePackages -disableAutomaticPackageResolution -skipPackageUpdates -derivedDataPath build/device -jobs "$(sysctl -n hw.logicalcpu)" -parallelizeTargets ARCHS=arm64 CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
+          python3 scripts/build_input_times.py restore
+          xcodebuild build -project Streamstiny.xcodeproj -scheme Streamstiny -configuration Release -destination 'generic/platform=iOS' -clonedSourcePackagesDirPath build/SourcePackages -disableAutomaticPackageResolution -skipPackageUpdates -derivedDataPath build/device -jobs "$(sysctl -n hw.logicalcpu)" -parallelizeTargets -showBuildTimingSummary ARCHS=arm64 CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
+          python3 scripts/build_input_times.py save
       - name: Package and validate TrollStore IPA
         if: steps.package.outputs.cache-hit != 'true'
         run: bash scripts/package.sh
