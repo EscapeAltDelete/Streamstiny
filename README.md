@@ -20,9 +20,3 @@ Build **Streamstiny.tipa** using the [local build instructions](docs/building.md
 - Picture in Picture starts automatically when you leave the app, when supported and enabled on your device.
 
 Stream availability and quality depend on the provider and your device. Twitch may require authorization; protected videos may be unavailable. Viewer counts appear when Destiny.gg supplies them.
-
-## Development and builds
-
-This repository keeps the current code on `main` and contains no executable GitHub Actions workflows. The previous build workflow is retained as an inactive reference at [docs/build.yml.disabled](docs/build.yml.disabled).
-
-See [build instructions](docs/building.md) for native build commands and local regression checks.
