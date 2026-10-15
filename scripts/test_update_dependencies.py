@@ -64,11 +64,11 @@ class DependencyUpdateTests(unittest.TestCase):
         target = dict(current, FFmpegKit="6.1.4")
         edits = updates.replacements(root, current, target)
         self.assertEqual(updates.pins(edits[root / "dependencies.yml"]), target)
-        self.assertIn("FFmpegKit 6.1.4", edits[root / "README.md"])
+        self.assertNotIn(root / "README.md", edits)
         notices = edits[root / "Streamstiny/ThirdPartyNotices/Sources.txt"]
         self.assertIn("/tree/6.1.4\n", notices)
         self.assertIn("Unrelated FFmpegKit 6.1.30 remains unchanged.", notices)
-        self.assertEqual(len(edits), 3)
+        self.assertEqual(len(edits), 2)
         self.assertEqual((root / "dependencies.yml").read_text(), MANIFEST)
 
     def test_pin_change_during_preparation_fails(self):

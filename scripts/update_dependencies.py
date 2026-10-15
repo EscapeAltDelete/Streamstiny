@@ -57,19 +57,18 @@ def replacements(root, current, target):
     for name in PACKAGES:
         manifest = pin_pattern(name).sub(lambda match: match[1] + target[name], manifest)
     result = {root / "dependencies.yml": manifest}
-    for relative in ("README.md", "Streamstiny/ThirdPartyNotices/Sources.txt"):
-        path = root / relative
-        text = path.read_text(encoding="utf-8")
-        for name in PACKAGES:
-            text = re.sub(
-                rf"\b{re.escape(name)} {re.escape(current[name])}(?![\w-]|\.\w)",
-                lambda _: f"{name} {target[name]}", text,
-            )
-            text = text.replace(
-                f"https://github.com/kingslay/{name}/tree/{current[name]}\n",
-                f"https://github.com/kingslay/{name}/tree/{target[name]}\n",
-            )
-        result[path] = text
+    path = root / "Streamstiny/ThirdPartyNotices/Sources.txt"
+    text = path.read_text(encoding="utf-8")
+    for name in PACKAGES:
+        text = re.sub(
+            rf"\b{re.escape(name)} {re.escape(current[name])}(?![\w-]|\.\w)",
+            lambda _: f"{name} {target[name]}", text,
+        )
+        text = text.replace(
+            f"https://github.com/kingslay/{name}/tree/{current[name]}\n",
+            f"https://github.com/kingslay/{name}/tree/{target[name]}\n",
+        )
+    result[path] = text
     return result
 
 

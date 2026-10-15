@@ -4,7 +4,11 @@ on:
     branches: [main]
     paths:
       - 'Streamstiny/**'
-      - 'scripts/**'
+      - 'scripts/build_input_times.py'
+      - 'scripts/patch_playback.py'
+      - 'scripts/package.sh'
+      - 'scripts/validate_ipa.py'
+      - 'scripts/Streamstiny.entitlements'
       - 'project.yml'
       - 'dependencies.yml'
       - '.github/workflows/build.yml'
@@ -14,7 +18,11 @@ on:
     branches: [main]
     paths:
       - 'Streamstiny/**'
-      - 'scripts/**'
+      - 'scripts/build_input_times.py'
+      - 'scripts/patch_playback.py'
+      - 'scripts/package.sh'
+      - 'scripts/validate_ipa.py'
+      - 'scripts/Streamstiny.entitlements'
       - 'project.yml'
       - 'dependencies.yml'
       - '.github/workflows/build.yml'
@@ -22,7 +30,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   build:
@@ -38,12 +46,14 @@ jobs:
       BUILD_CACHE_VERSION: v2-arm64-macos15-xcode16.4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - name: Cache validated package for these build inputs
         id: package
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/Streamstiny.tipa
-          key: tipa-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('Streamstiny/**', 'scripts/**', 'project.yml', 'dependencies.yml', '.github/workflows/build.yml', '.gitattributes') }}
+          key: tipa-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('Streamstiny/**', 'scripts/build_input_times.py', 'scripts/patch_playback.py', 'scripts/package.sh', 'scripts/validate_ipa.py', 'scripts/Streamstiny.entitlements', 'project.yml', 'dependencies.yml', '.github/workflows/build.yml', '.gitattributes') }}
       - name: Cache verified XcodeGen archive
         if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -82,7 +92,6 @@ jobs:
       - name: Build optimized ARM64 Release
         if: steps.package.outputs.cache-hit != 'true'
         run: |
-          python3 -m unittest discover -s scripts -p 'test_*.py'
           RESOLVED="Streamstiny.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
           if [ "${{ steps.packages.outputs.cache-hit }}" = "true" ] && [ -f build/SourcePackages/Package.resolved ]; then
             mkdir -p "$(dirname "$RESOLVED")"

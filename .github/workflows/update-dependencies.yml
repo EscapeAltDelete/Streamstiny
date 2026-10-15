@@ -32,21 +32,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           BRANCH: ${{ steps.updates.outputs.branch }}
+          GIT_AUTHOR_NAME: EscapeAltDelete
+          GIT_COMMITTER_NAME: EscapeAltDelete
+          GIT_AUTHOR_EMAIL: 96600150+EscapeAltDelete@users.noreply.github.com
+          GIT_COMMITTER_EMAIL: 96600150+EscapeAltDelete@users.noreply.github.com
         run: |
           STATE=$(gh pr list --head "$BRANCH" --base main --state all --json state --jq '.[0].state // empty')
           if [ "$STATE" = "CLOSED" ] || [ "$STATE" = "MERGED" ]; then
             echo "This update was already handled; leaving it closed."
             exit 0
           fi
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+          REMOTE_HEAD=$(git ls-remote --heads origin "$BRANCH")
+          if [ -n "$REMOTE_HEAD" ]; then
             echo "Keeping existing update branch and any manual patch fixes: $BRANCH"
+            HEAD_SHA=${REMOTE_HEAD%%$'\t'*}
           else
             git switch -c "$BRANCH"
-            git config user.name EscapeAltDelete
-            git config user.email 96600150+EscapeAltDelete@users.noreply.github.com
-            git add dependencies.yml README.md Streamstiny/ThirdPartyNotices/Sources.txt
+            git add dependencies.yml Streamstiny/ThirdPartyNotices/Sources.txt
             git commit -m "Update native playback dependencies"
             git push origin "HEAD:refs/heads/$BRANCH"
+            HEAD_SHA=$(git rev-parse HEAD)
           fi
           if [ -z "$STATE" ]; then
             cat > "$RUNNER_TEMP/playback-update.md" <<'EOF'
@@ -58,4 +63,9 @@ jobs:
           fi
           # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
           # workflow_dispatch is explicitly supported for this token.
-          gh workflow run build.yml --ref "$BRANCH"
+          RUN=$(gh run list --workflow build.yml --branch "$BRANCH" --commit "$HEAD_SHA" --limit 10 --json status,conclusion --jq '.[] | select(.status == "queued" or .status == "in_progress" or .conclusion == "success") | .status')
+          if [ -z "$RUN" ]; then
+            gh workflow run build.yml --ref "$BRANCH"
+          else
+            echo "Native validation is already running or passed for $HEAD_SHA."
+          fi
