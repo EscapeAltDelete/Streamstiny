@@ -10,6 +10,15 @@ on:
       - '.github/workflows/build.yml'
       - '.gitattributes'
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'Streamstiny/**'
+      - 'scripts/**'
+      - 'project.yml'
+      - 'dependencies.yml'
+      - '.github/workflows/build.yml'
+      - '.gitattributes'
 permissions:
   contents: read
 concurrency:
@@ -17,7 +26,10 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    if: ${{ github.repository == 'EscapeAltDelete/Streamstiny' && github.ref == 'refs/heads/main' }}
+    if: >-
+      ${{ github.repository == 'EscapeAltDelete/Streamstiny' &&
+          (github.ref == 'refs/heads/main' || github.event_name == 'pull_request' ||
+           (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/dependencies/playback-'))) }}
     runs-on: macos-15
     timeout-minutes: 15
     env:

@@ -1,0 +1,61 @@
+name: Update native playback dependencies
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: playback-dependency-updates
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository == 'EscapeAltDelete/Streamstiny'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+      - name: Test dependency tooling
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Check stable playback tags
+        id: updates
+        run: python3 scripts/update_dependencies.py
+      - name: Open update PR and start native validation
+        if: steps.updates.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.updates.outputs.branch }}
+        run: |
+          STATE=$(gh pr list --head "$BRANCH" --base main --state all --json state --jq '.[0].state // empty')
+          if [ "$STATE" = "CLOSED" ] || [ "$STATE" = "MERGED" ]; then
+            echo "This update was already handled; leaving it closed."
+            exit 0
+          fi
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            echo "Keeping existing update branch and any manual patch fixes: $BRANCH"
+          else
+            git switch -c "$BRANCH"
+            git config user.name EscapeAltDelete
+            git config user.email 96600150+EscapeAltDelete@users.noreply.github.com
+            git add dependencies.yml README.md Streamstiny/ThirdPartyNotices/Sources.txt
+            git commit -m "Update native playback dependencies"
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+          if [ -z "$STATE" ]; then
+            cat > "$RUNNER_TEMP/playback-update.md" <<'EOF'
+          Updates stable same-major dependency pins and bundled version references. Playback patch checksums remain unchanged.
+
+          Before merging, check the dispatched native build, review upstream compatibility and licenses, and verify playback and audio on iOS. Merging is manual.
+          EOF
+            gh pr create --base main --head "$BRANCH" --title "Update native playback dependencies" --body-file "$RUNNER_TEMP/playback-update.md"
+          fi
+          # GITHUB_TOKEN-created PRs do not trigger pull_request workflows.
+          # workflow_dispatch is explicitly supported for this token.
+          gh workflow run build.yml --ref "$BRANCH"
