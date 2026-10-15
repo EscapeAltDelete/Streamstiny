@@ -1,0 +1,7 @@
+packages:
+  KSPlayer:
+    url: https://github.com/kingslay/KSPlayer.git
+    exactVersion: 2.3.4
+  FFmpegKit:
+    url: https://github.com/kingslay/FFmpegKit.git
+    exactVersion: 6.1.3

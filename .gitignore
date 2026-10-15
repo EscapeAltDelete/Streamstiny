@@ -1,0 +1,9 @@
+.DS_Store
+build/
+*.ipa
+*.tipa
+*.xcuserstate
+xcuserdata/
+Streamstiny.xcodeproj/
+.credentials
+__pycache__/
