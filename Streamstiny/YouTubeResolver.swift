@@ -3,35 +3,15 @@ import Foundation
 // Resolve on the viewing device: signed Google Video URLs can be tied to its connection.
 // Only read the player script's timestamp; no JavaScript runtime or signature deciphering.
 actor YouTubeResolver {
-  private struct Bootstrap {
+  private struct Bootstrap: Sendable {
     let visitor: String?
     let timestamp: Int?
     let created = Date()
   }
 
-  private struct PlayerResponse: Decodable {
-    struct Status: Decodable {
-      let status: String
-    }
-    struct Details: Decodable {
-      let videoId: String
-      let isLive: Bool?
-    }
-    struct Streaming: Decodable {
-      struct Format: Decodable {
-        let url: String?
-        let mimeType: String?
-        let height: Int?
-      }
-      let hlsManifestUrl: String?
-      let formats: [Format]?
-    }
-    let playabilityStatus: Status?
-    let videoDetails: Details?
-    let streamingData: Streaming?
-  }
+  private typealias PlayerResponse = YouTubePlayerResponse
 
-  private enum Client: CaseIterable {
+  private enum Client: CaseIterable, Sendable {
     // Both expose ordinary live HLS without the iOS client's delayed token requirement.
     // Client versions follow yt-dlp's public YouTube extractor definitions.
     case vision, android
@@ -87,7 +67,7 @@ actor YouTubeResolver {
     var videoID = source.key
     var pageResponse: PlayerResponse?
     let reusedBootstrap = !source.isYouTubeChannel
-      && bootstrap.map { $0.timestamp != nil && Date().timeIntervalSince($0.created) < 1800 } == true
+      && bootstrap.map { Date().timeIntervalSince($0.created) < 1800 } == true
 
     if !reusedBootstrap {
       let page = try await loadPage(pageURL)
@@ -125,21 +105,28 @@ actor YouTubeResolver {
       try Task.checkCancellation()
       return media
     }
-    var lastError: Error = PlaybackFailure.unavailable
-    for client in Client.allCases {
-      try Task.checkCancellation()
-      do {
-        let response = try await player(videoID, client: client, bootstrap: bootstrap)
-        guard response.videoDetails?.videoId == videoID else {
-          throw response.playabilityStatus.map(failure) ?? PlaybackFailure.unavailable
+    // A slow client must not hold up another client's usable HLS response.
+    return try await withThrowingTaskGroup(of: PlaybackMedia.self) { group in
+      for client in Client.allCases {
+        group.addTask {
+          let response = try await self.player(videoID, client: client, bootstrap: bootstrap)
+          guard response.videoDetails?.videoId == videoID else {
+            throw response.playabilityStatus.map(self.failure) ?? PlaybackFailure.unavailable
+          }
+          return try await self.playable(response)
         }
-        return try await playable(response)
-      } catch {
-        try Task.checkCancellation()
-        lastError = error
       }
+      var lastError: Error = PlaybackFailure.unavailable
+      while !group.isEmpty {
+        do {
+          if let media = try await group.next() { group.cancelAll(); return media }
+        } catch {
+          try Task.checkCancellation()
+          lastError = error
+        }
+      }
+      throw lastError
     }
-    throw lastError
   }
 
   private func loadPage(_ url: URL) async throws -> (player: PlayerResponse?, bootstrap: Bootstrap) {
@@ -155,7 +142,7 @@ actor YouTubeResolver {
       || (player?.streamingData?.formats?.contains {
         $0.url != nil && ($0.mimeType ?? "").hasPrefix("video/mp4")
       } == true
-        && player?.videoDetails?.isLive != true)
+        && player?.isLive != true)
     if !suppliedMedia, player?.videoDetails != nil,
       let script, let url = URL(string: script, relativeTo: url)?.absoluteURL,
       url.scheme == "https", url.host == "www.youtube.com",
@@ -227,11 +214,11 @@ actor YouTubeResolver {
         throw PlaybackFailure.unavailable
       }
       return PlaybackMedia(
-        url, expires: Self.expiry(url), isLive: response.videoDetails?.isLive,
+        url, expires: Self.expiry(url), isLive: response.liveStatus(in: text),
         variants: variants)
     }
     // Progressive formats cannot replace an ongoing livestream's HLS transport.
-    guard response.videoDetails?.isLive != true else { throw PlaybackFailure.unavailable }
+    guard response.isLive != true else { throw PlaybackFailure.unavailable }
     let formats = (response.streamingData?.formats ?? []).filter {
       ($0.mimeType ?? "").hasPrefix("video/mp4") && $0.url != nil
     }.sorted { ($0.height ?? 0) > ($1.height ?? 0) }
@@ -258,7 +245,7 @@ actor YouTubeResolver {
     return data
   }
 
-  private func failure(_ status: PlayerResponse.Status) -> Error {
+  nonisolated private func failure(_ status: PlayerResponse.Status) -> Error {
     if status.status == "LIVE_STREAM_OFFLINE" { return PlaybackFailure.offline }
     if status.status == "LOGIN_REQUIRED" || status.status == "AGE_CHECK_REQUIRED" {
       return PlaybackFailure.restricted

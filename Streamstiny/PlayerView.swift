@@ -147,7 +147,10 @@ import SwiftUI
     do {
       let media = try await resolver.resolve(source)
       let useLiveDecoder: Bool
-      if let isLive = media.isLive {
+      if source.provider == .youtube {
+        // Native HLS handles YouTube adaptation without FFmpeg rendition probing.
+        useLiveDecoder = false
+      } else if let isLive = media.isLive {
         useLiveDecoder = isLive
       } else {
         useLiveDecoder = try await resolver.requiresLiveDecoder(media.url, source: source)
@@ -200,7 +203,8 @@ import SwiftUI
       } else {
         hls?.stop()
         hls = nil
-        let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL, headers: media.headers)
+        let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL,
+          headers: media.headers, adaptive: source.provider == .youtube)
         player.replaceCurrentItem(with: item)
         if force, !wasLive, oldTime > 0 {
           await player.seek(to: CMTime(seconds: oldTime, preferredTimescale: 600))
@@ -231,7 +235,7 @@ import SwiftUI
       }
       // Existing live CDN playback can outlive the grant used to open it.
       // Recover on actual failure instead of rebuilding a healthy stream on a timer.
-      if !useLiveDecoder, let expires = media.expires {
+      if !useLiveDecoder, media.isLive != true, let expires = media.expires {
         let delay = max(15, expires.timeIntervalSinceNow - 30)
         renewal = Task { [weak self] in
           do { try await Task.sleep(for: .seconds(delay)) } catch { return }
@@ -250,15 +254,16 @@ import SwiftUI
       self.error = error.localizedDescription
     }
   }
-  static func makeItem(master: URL, variant: HLSVariant?, edgeURL: URL? = nil, headers: [String: String] = [:]) -> AVPlayerItem {
-    let url = playbackURL(master: master, variant: variant, edgeURL: edgeURL)
+  static func makeItem(master: URL, variant: HLSVariant?, edgeURL: URL? = nil,
+    headers: [String: String] = [:], adaptive: Bool = false) -> AVPlayerItem {
+    let url = adaptive ? master : playbackURL(master: master, variant: variant, edgeURL: edgeURL)
     let item = AVPlayerItem(
       asset: AVURLAsset(
         url: url,
         options: [AVURLAssetHTTPUserAgentKey: headers["User-Agent"] ?? PlaybackResolver.userAgent,
           "AVURLAssetHTTPHeaderFieldsKey": headers]))
-    // Keep the master for alternate audio/video groups so audio remains synchronized.
-    if let variant, variant.externalMedia {
+    // Keep the master for alternate media groups and YouTube bitrate adaptation.
+    if let variant, variant.externalMedia || adaptive {
       item.preferredMaximumResolution = CGSize(
         width: CGFloat(variant.width), height: CGFloat(variant.height))
       item.preferredPeakBitRate = variant.bandwidth
@@ -385,7 +390,8 @@ import SwiftUI
             playbackURL,
             variant: variant, startTime: restoreTime ? time : 0)
         } else {
-          let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL, headers: media.headers)
+          let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL,
+            headers: media.headers, adaptive: source?.provider == .youtube)
           player.replaceCurrentItem(with: item)
           itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.itemChanged() }
@@ -588,7 +594,7 @@ import SwiftUI
     seconds = time.isFinite ? max(0, time) : 0
     let length = player.currentItem?.duration.seconds ?? 0
     duration = length.isFinite ? max(0, length) : 0
-    live = length.isInfinite || player.currentItem?.duration.isIndefinite == true
+    live = media?.isLive ?? (length.isInfinite || player.currentItem?.duration.isIndefinite == true)
     playing = player.timeControlStatus == .playing
     playbackRate = playing ? player.rate : 0
     buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
