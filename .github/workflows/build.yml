@@ -48,15 +48,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Cache validated package for these build inputs
+      # All branches restore; only successful main builds save shared caches.
+      - name: Restore validated package for these build inputs
         id: package
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/Streamstiny.tipa
           key: tipa-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('Streamstiny/**', 'scripts/build_input_times.py', 'scripts/patch_playback.py', 'scripts/package.sh', 'scripts/validate_ipa.py', 'scripts/Streamstiny.entitlements', 'project.yml', 'dependencies.yml', '.github/workflows/build.yml', '.gitattributes') }}
-      - name: Cache verified XcodeGen archive
+      - name: Restore verified XcodeGen archive
+        id: xcodegen
         if: steps.package.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/Library/Caches/Streamstiny/xcodegen.zip
           key: xcodegen-macos-2.44.1-a2e905fb68446e9b
@@ -71,16 +73,17 @@ jobs:
           echo 'a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  '"$ARCHIVE" | shasum -a 256 -c -
           unzip -q "$ARCHIVE" -d "$RUNNER_TEMP/xcodegen"
           "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
-      - name: Cache pinned native playback packages
+      - name: Restore pinned native playback packages
         id: packages
         if: steps.package.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/SourcePackages
           key: swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
-      - name: Cache compiled release products
+      - name: Restore compiled release products
+        id: release
         if: steps.package.outputs.cache-hit != 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
             build/device/Build
@@ -117,3 +120,31 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
+      - name: Save validated package
+        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: build/Streamstiny.tipa
+          key: ${{ steps.package.outputs.cache-primary-key }}
+      - name: Save verified XcodeGen archive
+        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.xcodegen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/Streamstiny/xcodegen.zip
+          key: ${{ steps.xcodegen.outputs.cache-primary-key }}
+      - name: Save pinned native playback packages
+        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: build/SourcePackages
+          key: ${{ steps.packages.outputs.cache-primary-key }}
+      - name: Save compiled release products
+        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.release.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: |
+            build/device/Build
+            build/device/ModuleCache.noindex
+            build/device/SDKStatCaches.noindex
+            build/device/ci-inputs.json
+          key: ${{ steps.release.outputs.cache-primary-key }}
