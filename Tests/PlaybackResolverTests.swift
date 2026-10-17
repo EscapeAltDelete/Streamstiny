@@ -104,8 +104,16 @@ enum PlaybackResolverTests {
 
     let twitch = #"{"data":{"streamPlaybackAccessToken":{"value":"{}","signature":"fixture"}}}"#
     PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, master)])
-    let media = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))
-    precondition(media.variants?.count == 1 && PlaybackProtocol.count == 2)
+    let previous = UserDefaults.standard.object(forKey: "twitchLowLatency")
+    defer { UserDefaults.standard.set(previous, forKey: "twitchLowLatency") }
+    for enabled in [false, true] {
+      UserDefaults.standard.set(enabled, forKey: "twitchLowLatency")
+      PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, master)])
+      let media = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))
+      precondition(media.variants?.count == 1 && PlaybackProtocol.count == 2)
+      let query = URLComponents(url: media.url, resolvingAgainstBaseURL: false)!.queryItems!
+      precondition(query.first { $0.name == "fast_bread" }?.value == String(enabled))
+    }
     PlaybackProtocol.prepare(["gql.twitch.tv/gql": (401, "")])
     do {
       _ = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))

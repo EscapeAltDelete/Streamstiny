@@ -13,17 +13,24 @@ import UIKit
   private(set) var error: Error?
 
   init(
-    url: URL, variant: HLSVariant?, headers: [String: String], playing: Bool, changed: @escaping () -> Void
+    url: URL, variant: HLSVariant?, headers: [String: String], provider: StreamSource.Provider, playing: Bool, changed: @escaping () -> Void
   ) {
-    let options = HLSOptions(variant: variant, headers: headers)
-    if url.host == "127.0.0.1" { options.preferredForwardBufferDuration = 2 }
-    options.isSeekedAutoPlay = playing
+    let options = HLSOptions(url: url, variant: variant, headers: headers, provider: provider, playing: playing)
     engine = KSMEPlayer(url: url, options: options)
     wantsPlayback = playing
     self.changed = changed
     super.init()
     engine.delegate = self
     engine.contentMode = .scaleAspectFit
+  }
+
+  func replace(url: URL, variant: HLSVariant?, headers: [String: String], provider: StreamSource.Provider, playing: Bool) {
+    processorMonitor = nil
+    error = nil
+    wantsPlayback = playing
+    let options = HLSOptions(url: url, variant: variant, headers: headers, provider: provider, playing: playing)
+    engine.replace(url: url, options: options)
+    start()
   }
 
   func start() {
@@ -126,12 +133,18 @@ import UIKit
 
 private final class HLSOptions: KSOptions {
   private let variant: HLSVariant?
-  init(variant: HLSVariant?, headers: [String: String]) {
+  init(url: URL, variant: HLSVariant?, headers: [String: String], provider: StreamSource.Provider, playing: Bool) {
     self.variant = variant
     super.init()
     userAgent = headers["User-Agent"] ?? PlaybackResolver.userAgent
     appendHeader(headers)
-    preferredForwardBufferDuration = 0.1
+    let lowLatency = provider == .twitch && UserDefaults.standard.bool(forKey: "twitchLowLatency")
+    preferredForwardBufferDuration = !lowLatency && url.host == "127.0.0.1" ? 2 : 0.1
+    if lowLatency { formatContextOptions["live_start_index"] = -2 }
+    if lowLatency || provider == .youtube {
+      formatContextOptions["analyzeduration"] = 500_000
+    }
+    isSeekedAutoPlay = playing
     maxBufferDuration = 20
     hardwareDecode = true
     videoAdaptable = variant == nil

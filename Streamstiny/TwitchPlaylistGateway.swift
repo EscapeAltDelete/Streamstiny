@@ -107,6 +107,8 @@ actor TwitchPlaylistSession {
   private let variants: [HLSVariant]
   private let resolver: PlaybackResolver
   private let network: URLSession
+  private let blockAds = UserDefaults.standard.bool(forKey: "twitchAdBlocking")
+  private let lowLatency = UserDefaults.standard.bool(forKey: "twitchLowLatency")
   private let force = UserDefaults.standard.bool(forKey: "twitchForceAdBlocking")
   private var routes: [String: URL] = [:]
   private var paths: [URL: String] = [:]
@@ -152,7 +154,7 @@ actor TwitchPlaylistSession {
       data.count <= 2 * 1024 * 1024, let final = http.url, Self.allowed(final) else { throw URLError(.badServerResponse) }
     let text = String(decoding: data, as: UTF8.self)
     guard text.hasPrefix("#EXTM3U") else { throw URLError(.cannotDecodeContentData) }
-    return (text, final)
+    return (lowLatency ? TwitchLowLatency.expand(text) : text, final)
   }
   private static func allowed(_ url: URL) -> Bool {
     guard url.scheme == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
@@ -177,6 +179,7 @@ actor TwitchPlaylistSession {
     do {
       let (text, base) = try await fetch(url)
       let resolved = absolute(text, base: base, localPlaylists: true)
+      guard blockAds else { return (200, resolved) }
       guard let variant = variants.first(where: { $0.url == url }), !variant.externalMedia,
         let primary = TwitchAdPlaylist(resolved),
         !primary.segments.contains(where: { $0.encrypted }) else {

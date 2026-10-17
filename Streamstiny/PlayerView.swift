@@ -5,7 +5,6 @@ import Observation
 import SwiftUI
 
 @MainActor @Observable final class NativePlayback: NSObject, AVPictureInPictureControllerDelegate {
-  let player: AVPlayer
   private(set) var hls: HLSPlayback?
   private(set) var title = ""
   private(set) var loading = false
@@ -34,13 +33,11 @@ import SwiftUI
   }
   private var nowPlayingState: NowPlayingState?
   private var previousDefaultRate: Float = 1
-  private var rateObserver: NSKeyValueObservation?
   private var media: PlaybackMedia?
   private var discovery: Task<Void, Never>?
   private var selection: Task<Void, Never>?
   private var selectionVersion = 0
   private var stall: Task<Void, Never>?
-  private var statusObserver: NSKeyValueObservation?
   private var recoveredAt = Date.distantPast
   var supportsEdges: Bool {
     source?.provider == .angelthump
@@ -50,37 +47,16 @@ import SwiftUI
   }
   private let resolver = PlaybackResolver()
   private var source: StreamSource?
-  private var observer: PlaybackTimeObservation?
-  private var itemObserver: NSKeyValueObservation?
   private var twitchGateway: TwitchPlaylistGateway?
   private var retry: Task<Void, Never>?
   private var retryVersion = 0
   private var generation = 0
   private var failures = 0
   private var wantsPlayback = true
-  private var pip: AVPictureInPictureController?
-  private weak var pipLayer: AVPlayerLayer?
   private var commands: [PlaybackCommandTarget] = []
 
-  override init() {
-    player = AVPlayer()
-    super.init()
-    NotificationCenter.default.addObserver(self, selector: #selector(itemEnded(_:)),
-      name: .AVPlayerItemDidPlayToEndTime, object: nil)
-  }
+  var pipActive: Bool { hls?.engine.pipController?.isPictureInPictureActive == true }
 
-  var pipActive: Bool {
-    hls?.engine.pipController?.isPictureInPictureActive == true
-      || pip?.isPictureInPictureActive == true
-  }
-
-  func attach(_ layer: AVPlayerLayer) {
-    guard hls == nil, !pipActive, pipLayer !== layer else { return }
-    pipLayer = layer
-    pip = AVPictureInPictureController(playerLayer: layer)
-    pip?.delegate = self
-    pip?.canStartPictureInPictureAutomaticallyFromInline = true
-  }
   nonisolated func pictureInPictureController(
     _ controller: AVPictureInPictureController,
     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (
@@ -90,7 +66,7 @@ import SwiftUI
     completionHandler(true)
   }
   func load(_ source: StreamSource, force: Bool = false) async {
-    guard force || self.source != source || (player.currentItem == nil && hls == nil) else {
+    guard force || self.source != source || hls == nil else {
       return
     }
     endCatchUp()
@@ -120,14 +96,10 @@ import SwiftUI
     title = source.title
     error = nil
     loading = true
-    itemObserver = nil
     if !force {
-      hls?.stop()
-      hls = nil
+      hls?.pause()
       twitchGateway?.stop()
       twitchGateway = nil
-      player.pause()
-      player.replaceCurrentItem(with: nil)
       playing = false
       buffering = false
     }
@@ -164,43 +136,17 @@ import SwiftUI
       try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try AVAudioSession.sharedInstance().setActive(true)
       var gateway: TwitchPlaylistGateway?
-      if source.provider == .twitch, UserDefaults.standard.bool(forKey: "twitchAdBlocking") {
+      if source.provider == .twitch, UserDefaults.standard.bool(forKey: "twitchAdBlocking") || UserDefaults.standard.bool(forKey: "twitchLowLatency") {
         gateway = try await TwitchPlaylistGateway.start(source: source, variants: variants, resolver: resolver)
         guard version == generation, !Task.isCancelled else { gateway?.stop(); return }
       }
       let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
       let playbackURL = await gateway?.url(for: remoteURL) ?? remoteURL
       guard version == generation, !Task.isCancelled else { gateway?.stop(); return }
-      if source.provider != .youtube {
-        installHLS(playbackURL, variant: variant)
-      } else {
-        hls?.stop()
-        hls = nil
-        let item = AVPlayerItem(master: media.url, variant: variant, headers: media.headers)
-        player.replaceCurrentItem(with: item)
-        if wantsPlayback { player.play() }
-        itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
-          Task { @MainActor [weak self] in self?.itemChanged() }
-        }
-      }
+      installHLS(playbackURL, variant: variant)
       twitchGateway?.stop()
       twitchGateway = gateway
-      if observer == nil {
-        let token = player.addPeriodicTimeObserver(
-          forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main
-        ) { [weak self] _ in
-          Task { @MainActor [weak self] in self?.updateTime() }
-        }
-        observer = PlaybackTimeObservation(player: player, token: token)
-        statusObserver = player.observe(\.timeControlStatus, options: [.initial, .new]) {
-          [weak self] _, _ in
-          Task { @MainActor [weak self] in self?.updateTime() }
-        }
-        rateObserver = player.observe(\.rate, options: [.initial, .new]) { [weak self] _, _ in
-          Task { @MainActor [weak self] in self?.updateTime() }
-        }
-        configureRemoteCommands()
-      }
+      if commands.isEmpty { configureRemoteCommands() }
       loading = false
       stall?.cancel()
       stall = nil
@@ -216,14 +162,12 @@ import SwiftUI
   }
 
   private func installHLS(_ url: URL, variant: HLSVariant?) {
-    hls?.stop()
-    player.pause()
-    player.replaceCurrentItem(with: nil)
-    itemObserver = nil
-    pip?.stopPictureInPicture()
-    pip = nil
-    pipLayer = nil
-    hls = HLSPlayback(url: url, variant: variant, headers: media?.headers ?? [:], playing: wantsPlayback) {
+    guard let provider = source?.provider else { return }
+    if let hls {
+      hls.replace(url: url, variant: variant, headers: media?.headers ?? [:], provider: provider, playing: wantsPlayback)
+      return
+    }
+    hls = HLSPlayback(url: url, variant: variant, headers: media?.headers ?? [:], provider: provider, playing: wantsPlayback) {
       [weak self] in
       self?.updateTime()
     }
@@ -283,12 +227,7 @@ import SwiftUI
     guard automaticallyCatchingUp != active else { return }
     automaticallyCatchingUp = active
     let rate: Float = active ? 2 : 1
-    if let hls {
-      hls.setRate(rate)
-    } else {
-      player.defaultRate = rate
-      if wantsPlayback, player.currentItem?.status == .readyToPlay { player.play() }
-    }
+    hls?.setRate(rate)
     if playing { playbackRate = rate }
   }
 
@@ -304,12 +243,6 @@ import SwiftUI
     guard id != qualityID || requestedEdge != edge else { return }
     let variant = variants.first { $0.id == id }
     guard id == nil || variant != nil else { return }
-    if source?.provider == .youtube, let item = player.currentItem,
-      (item.asset as? AVURLAsset)?.url == Self.playbackURL(master: media.url, variant: variant, edgeURL: nil) {
-      item.limitQuality(to: variant)
-      qualityID = id
-      return
-    }
     endCatchUp()
     setAutomaticCatchUp(false)
     selection?.cancel()
@@ -326,27 +259,17 @@ import SwiftUI
           edgeURL = try await resolver.verifiedEdge(requestedEdge, variant: variant)
         }
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
-        if hls != nil {
-          let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
-          let playbackURL = await twitchGateway?.url(for: remoteURL) ?? remoteURL
-          guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
-          installHLS(playbackURL, variant: variant)
-        } else {
-          let item = AVPlayerItem(master: media.url, variant: variant, headers: media.headers)
-          player.replaceCurrentItem(with: item)
-          itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.itemChanged() }
-          }
-        }
+        let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
+        let playbackURL = await twitchGateway?.url(for: remoteURL) ?? remoteURL
+        guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
+        installHLS(playbackURL, variant: variant)
         qualityID = id
         edge = requestedEdge
         failures = 0
         stall?.cancel()
         stall = nil
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
-        if wantsPlayback {
-          if let hls { hls.play() } else { player.play() }
-        }
+        if wantsPlayback { hls?.play() }
       } catch {
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
         settingsError = "That server didn’t return playable media. Your current stream was kept."
@@ -394,22 +317,13 @@ import SwiftUI
     discovering = false
     switching = false
     cancelRetry()
-    itemObserver = nil
-    statusObserver = nil
-    rateObserver = nil
     stall?.cancel()
     stall = nil
-    observer = nil
     commands.removeAll()
-    pip?.stopPictureInPicture()
-    pip = nil
-    pipLayer = nil
     hls?.stop()
     hls = nil
     twitchGateway?.stop()
     twitchGateway = nil
-    player.pause()
-    player.replaceCurrentItem(with: nil)
     source = nil
     media = nil
     variants = []
@@ -436,19 +350,6 @@ import SwiftUI
     retry = nil
   }
 
-  private func itemChanged() {
-    if player.currentItem?.status == .failed { recoverFailure() }
-    updateTime()
-  }
-
-  @objc nonisolated private func itemEnded(_ notification: Notification) {
-    guard let item = notification.object as? AVPlayerItem else { return }
-    Task { @MainActor [weak self] in
-      guard let self, self.player.currentItem === item else { return }
-      self.streamEnded()
-    }
-  }
-
   private func streamEnded() {
     guard !loading, error == nil else { return }
     error = "This stream has ended."
@@ -456,7 +357,6 @@ import SwiftUI
     endCatchUp()
     setAutomaticCatchUp(false)
     hls?.pause()
-    player.pause()
     cancelRetry()
     stall?.cancel()
     stall = nil
@@ -502,7 +402,6 @@ import SwiftUI
   }
   private func updateTime() {
     waitingForAds = twitchGateway?.waiting ?? false
-    if catchingUp, wantsPlayback { hls?.setRate(2) }
     if let hls {
       let engine = hls.engine
       if engine.playbackState == .finished, hls.error == nil {
@@ -510,28 +409,18 @@ import SwiftUI
         return
       }
       playing = engine.isPlaying && engine.loadState == .playable
-      playbackRate = playing ? engine.playbackRate : 0
       buffering = wantsPlayback && engine.loadState != .playable
       buffered = max(0, engine.playableTime - engine.currentPlaybackTime)
+      if catchingUp, wantsPlayback {
+        hls.setRate(buffered > (engine.playbackRate > 1 ? 0.5 : 1) ? 2 : 1)
+      }
+      playbackRate = playing ? engine.playbackRate : 0
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
       if hls.error != nil { recoverFailure() }
       if let controller = engine.pipController, controller.delegate !== self {
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = true
-      }
-    } else if let item = player.currentItem {
-      let time = player.currentTime().seconds
-      playing = player.timeControlStatus == .playing
-      playbackRate = playing ? player.rate : 0
-      buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-      let size = item.presentationSize
-      resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
-      let timing = PlaybackTiming(
-        current: time, loaded: item.loadedTimeRanges.map(\.timeRangeValue))
-      buffered = timing.buffered
-      if catchingUp && (!wantsPlayback || item.status != .readyToPlay) {
-        endCatchUp()
       }
     } else { return }
     if buffering && wantsPlayback && !loading && !catchingUp && !waitingForAds && hls?.error == nil {
@@ -558,40 +447,24 @@ import SwiftUI
   func beginCatchUp() {
     updateTime()
     guard wantsPlayback, !catchingUp,
-      hls?.engine.isReadyToPlay == true || player.currentItem?.status == .readyToPlay
+      hls?.engine.isReadyToPlay == true
     else { return }
     setAutomaticCatchUp(false)
-    previousDefaultRate = hls?.engine.playbackRate ?? player.defaultRate
+    previousDefaultRate = hls?.engine.playbackRate ?? 1
     catchingUp = true
-    if let hls {
-      hls.setRate(2)
-      hls.play()
-    } else {
-      player.play(atRate: 2)
-    }
-    updateTime()
+    hls?.play()
   }
 
   func endCatchUp() {
     guard catchingUp else { return }
     catchingUp = false
-    if let hls {
-      hls.setRate(previousDefaultRate)
-    } else {
-      player.defaultRate = previousDefaultRate
-      if wantsPlayback, player.currentItem?.status == .readyToPlay { player.play() }
-    }
+    hls?.setRate(previousDefaultRate)
     updateTime()
   }
 
   private func setPlayback(_ active: Bool) {
-    if let hls {
-      if active { hls.play() } else { hls.pause() }
-    } else {
-      if active { player.play() } else { player.pause() }
-    }
+    if active { hls?.play() } else { hls?.pause() }
   }
-
 
   private func scheduleRecovery() {
     guard !waitingForAds, stall == nil, failures < 2,
@@ -637,16 +510,6 @@ private final class PlaybackCommandTarget {
   deinit { command.removeTarget(token) }
 }
 
-private final class PlaybackTimeObservation {
-  let player: AVPlayer
-  let token: Any
-  init(player: AVPlayer, token: Any) {
-    self.player = player
-    self.token = token
-  }
-  deinit { player.removeTimeObserver(token) }
-}
-
 struct PlayerView: View {
   let source: StreamSource
   var blocked: String? = nil
@@ -657,6 +520,7 @@ struct PlayerView: View {
   let addStream: () -> Void
   let toggleChat: () -> Void
   @Environment(\.scenePhase) private var scenePhase
+  @AppStorage("twitchLowLatency") private var twitchLowLatency = false
   @AppStorage("automaticCatchUp") private var automaticCatchUp = false
   @AppStorage("targetBuffer") private var targetBuffer = 3.0
   @AppStorage("highestQuality") private var highestQuality = false
@@ -708,6 +572,9 @@ struct PlayerView: View {
     .task(id: source.id + (blocked ?? "")) {
       configurePlayback()
       if blocked == nil { await playback.load(source) } else { playback.stop() }
+    }
+    .onChange(of: twitchLowLatency) { _, _ in
+      if source.provider == .twitch { playback.reload() }
     }
     .onChange(of: automaticCatchUp) { _, _ in configurePlayback() }
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }
@@ -861,7 +728,6 @@ private struct NativeVideoLayer: UIViewRepresentable {
   func makeCoordinator() -> NativePlayback { playback }
   func makeUIView(context: Context) -> VideoSurface {
     let view = VideoSurface()
-    view.layerPlayer.videoGravity = .resizeAspect
     view.isAccessibilityElement = true
     view.accessibilityLabel = "Video"
     view.accessibilityIdentifier = "video"
@@ -873,9 +739,6 @@ private struct NativeVideoLayer: UIViewRepresentable {
     configure(view)
   }
   private func configure(_ view: VideoSurface) {
-    let player = playback.hls == nil ? playback.player : nil
-    if view.layerPlayer.player !== player { view.layerPlayer.player = player }
-    playback.attach(view.layerPlayer)
     view.setRenderingView(playback.hls?.engine.view)
     view.tap = tap
     view.hold = hold
@@ -898,7 +761,6 @@ private struct NativeVideoLayer: UIViewRepresentable {
     view.hold = nil
     view.tap = nil
     guard !coordinator.pipActive, UIApplication.shared.applicationState == .active else { return }
-    view.layerPlayer.player = nil
     view.setRenderingView(nil)
   }
 }
@@ -960,8 +822,6 @@ final class VideoSurface: UIView {
     if window == nil { cancelHold() }
   }
 
-  override class var layerClass: AnyClass { AVPlayerLayer.self }
-  var layerPlayer: AVPlayerLayer { layer as! AVPlayerLayer }
   override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
     guard !consumedTouch, !holding, press.state != .ended,
       let touch = touches.first, touch.phase == .ended

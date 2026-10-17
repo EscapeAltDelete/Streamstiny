@@ -20,13 +20,6 @@ import Foundation
       let decoded = try JSONDecoder().decode(StreamSource.self, from: JSONEncoder().encode(source))
       precondition(decoded == source)
     }
-    func range(_ start: Double, _ length: Double) -> CMTimeRange {
-      CMTimeRange(start: CMTime(seconds: start, preferredTimescale: 600), duration: CMTime(seconds: length, preferredTimescale: 600))
-    }
-    precondition(PlaybackTiming(current: 1, loaded: [range(4, 2), range(0, 2), range(2, 2)]).buffered == 5)
-    precondition(PlaybackTiming(current: 1, loaded: [range(4, 2), range(0, 2)]).buffered == 1)
-    precondition(PlaybackTiming(current: .nan, loaded: []).buffered == 0)
-    precondition(PlaybackTiming(current: 2, loaded: [range(0, 1)]).buffered == 0)
     let base = URL(string: "https://video.example/master.m3u8")!
     let mixed = """
       #EXTM3U
@@ -51,7 +44,6 @@ import Foundation
     try ChatEncodingTests.run()
     TwitchPlaybackTests.run()
     try await PlaybackResolverTests.run()
-    try await NativePlayerTests.run()
-    print("Passed live-source parsing, persistence, and contiguous-buffer regressions")
+    print("Passed live-source parsing, persistence, and quality regressions")
   }
 }

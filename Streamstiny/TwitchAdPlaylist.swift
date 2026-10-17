@@ -212,3 +212,26 @@ enum TwitchBackupSelection {
     }
   }
 }
+
+// Twitch advertises open, chunked media under its own prefetch tag.
+// Present it as the next segment so FFmpeg can read it while it is produced.
+enum TwitchLowLatency {
+  static func expand(_ text: String) -> String {
+    guard !text.contains("#EXT-X-ENDLIST"), let playlist = TwitchAdPlaylist(text),
+      !playlist.hasAds, !playlist.segments.contains(where: { $0.encrypted }) else { return text }
+    let duration = playlist.segments.map(\.duration).reduce(0, +) / Double(playlist.segments.count)
+    var lines: [String] = []
+    var discontinuity = false
+    for line in text.components(separatedBy: .newlines) {
+      if line == "#EXT-X-DISCONTINUITY" || line == "#EXT-X-TWITCH-PREFETCH-DISCONTINUITY" { discontinuity = true }
+      if !line.isEmpty, !line.hasPrefix("#") { discontinuity = false }
+      if line.hasPrefix("#EXT-X-TWITCH-PREFETCH:"), !discontinuity {
+        let address = String(line.dropFirst("#EXT-X-TWITCH-PREFETCH:".count))
+        guard let url = URL(string: address), url.scheme == nil || url.scheme == "https",
+          !address.isEmpty else { continue }
+        lines += ["#EXTINF:\(duration),live", address]
+      } else { lines.append(line) }
+    }
+    return lines.joined(separator: "\n")
+  }
+}

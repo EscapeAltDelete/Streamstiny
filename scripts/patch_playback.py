@@ -66,3 +66,13 @@ apply(path.with_name("AudioEnginePlayer.swift"),
         """            if sourceNodeAudioFormat != currentRender.audioFormat {
                 AudioEnginePlayer.clearAudioBuffers(ioData)
                 runOnMainThread""")])
+
+# Retain the display layer and its PiP content source across resolution changes.
+apply(path.with_name("MetalPlayView.swift"),
+      "571c51b2f067406896c493e1cd349e8f933934c3fd797780ee54b11d49807ea7",
+      "15e39dd69ff40337577551989c760c2f5d2d6071b9ee21870481632047267e08",
+      [("""                displayView.removeFromSuperview()
+                displayView = AVSampleBufferDisplayView()
+                displayView.frame = frame
+                addSubview(displayView)""",
+        """                displayView.displayLayer.flush()""")])

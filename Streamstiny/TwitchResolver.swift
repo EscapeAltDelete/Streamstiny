@@ -68,6 +68,7 @@ actor TwitchResolver {
     address.queryItems = [
       .init(name: "sig", value: signature), .init(name: "token", value: value),
       .init(name: "allow_source", value: "true"),
+      .init(name: "fast_bread", value: UserDefaults.standard.bool(forKey: "twitchLowLatency") ? "true" : "false"),
       .init(name: "multigroup_video", value: "true"),
       .init(name: "supported_codecs", value: codecs.joined(separator: ",")),
       .init(name: "reassignments_supported", value: "true"),
