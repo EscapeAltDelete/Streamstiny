@@ -54,38 +54,29 @@ enum PlaybackResolverTests {
     let resolver = PlaybackResolver(configuration: config)
     let url = URL(string: "https://video.example/master.m3u8")!
     let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1280x720,CODECS=\"avc1.64001F,mp4a.40.2\"\nmedia.m3u8\n"
-    let live = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2,live\nsegment.ts\n"
-    PlaybackProtocol.prepare(["video.example/master.m3u8": (200, master), "video.example/media.m3u8": (200, live)])
-    let inspection = try await resolver.inspectHLS(url)
-    precondition(inspection.live && inspection.variants?.count == 1)
-    precondition(PlaybackProtocol.count == 2, "Inspect the master once and reuse its quality choices")
-    PlaybackProtocol.prepare(["video.example/master.m3u8": (200, live + "#EXT-X-ENDLIST\n")])
-    let recording = try await resolver.inspectHLS(url)
-    precondition(!recording.live && recording.variants?.isEmpty == true && PlaybackProtocol.count == 1)
+    PlaybackProtocol.prepare(["video.example/master.m3u8": (200, master)])
+    let choices = try await resolver.variants(at: url)
+    precondition(choices.count == 1 && choices[0].url.path == "/media.m3u8")
+    precondition(PlaybackProtocol.count == 1, "Quality discovery only downloads the master")
     PlaybackProtocol.prepare([:])
-    let file = try await resolver.inspectHLS(URL(string: "https://video.example/video.mp4")!)
-    precondition(!file.live && file.variants?.isEmpty == true && PlaybackProtocol.count == 0)
-    let unavailable = try await resolver.inspectHLS(url)
-    precondition(unavailable.live && unavailable.variants == nil, "Keep the decoder fallback after inspection fails")
-    let cancelled = Task { try await resolver.inspectHLS(url) }
-    cancelled.cancel()
+    let none = try await resolver.variants(at: URL(string: "https://video.example/no-playlist")!)
+    precondition(none.isEmpty && PlaybackProtocol.count == 0)
     do {
-      _ = try await cancelled.value
-      preconditionFailure("Inspection must propagate cancellation")
-    } catch is CancellationError {}
+      _ = try await resolver.variants(at: url)
+      preconditionFailure("Failed playlist fetches must remain retryable errors")
+    } catch PlaybackFailure.unavailable {}
 
-    let metadata: [(StreamSource.Provider, String, String, String, Bool?, Int)] = [
-      (.kick, "channel", "kick.com/api/v2/channels/channel", #"{"livestream":{},"playback_url":"https://video.example/master.m3u8"}"#, true, 1),
-      (.kickVod, "channel/id", "www.destiny.gg/api/kick/vod/channel/id", #"{"data":{"source":"https://video.example/master.m3u8"}}"#, false, 1),
-      (.angelthump, "channel", "api.angelthump.com/v3/streams", #"[{"type":"live","user":{}}]"#, true, 2),
-      (.rumble, "id", "rumble.com/embedJS/u3/", #"{"u":{"hls":"https://video.example/master.m3u8"}}"#, nil, 1),
-      (.vimeo, "123", "player.vimeo.com/video/123/config", #"{"request":{"files":{"hls":{"default_cdn":"test","cdns":{"test":{"url":"https://video.example/master.m3u8"}}}}}}"#, nil, 1),
-      (.facebook, "id", "www.facebook.com/id", #"{"browser_native_hd_url":"https://video.example/master.m3u8"}"#, nil, 1),
+    let metadata: [(StreamSource.Provider, String, String, String, Int)] = [
+      (.kick, "channel", "kick.com/api/v2/channels/channel", #"{"livestream":{},"playback_url":"https://video.example/master.m3u8"}"#, 1),
+      (.angelthump, "channel", "api.angelthump.com/v3/streams", #"[{"type":"live","user":{}}]"#, 2),
+      (.rumble, "id", "rumble.com/embedJS/u3/", #"{"u":{"hls":"https://video.example/master.m3u8"}}"#, 1),
+      (.vimeo, "123", "player.vimeo.com/video/123/config", #"{"request":{"files":{"hls":{"default_cdn":"test","cdns":{"test":{"url":"https://video.example/master.m3u8"}}}}}}"#, 1),
+      (.facebook, "id", "www.facebook.com/id", #"{"playable_url":"https://video.example/master.m3u8"}"#, 1),
     ]
-    for (provider, key, path, json, expectedLive, requests) in metadata {
-      PlaybackProtocol.prepare([path: (200, json), "vigor.angelthump.com/channel/token": (200, #"{"token":"fixture","expiresIn":300}"#)])
+    for (provider, key, path, json, requests) in metadata {
+      PlaybackProtocol.prepare([path: (200, json), "vigor.angelthump.com/channel/token": (200, #"{"token":"fixture"}"#)])
       let media = try await resolver.resolve(StreamSource(provider: provider, key: key))
-      precondition(media.isLive == expectedLive, "Incorrect live/VOD status: \(provider)")
+      precondition(media.url.scheme == "https" && media.url.pathExtension == "m3u8")
       precondition(PlaybackProtocol.count == requests, "Unexpected metadata requests: \(provider)")
     }
     PlaybackProtocol.prepare([:])
@@ -109,40 +100,34 @@ enum PlaybackResolverTests {
     } catch PlaybackFailure.restricted {}
     precondition(PlaybackProtocol.count == 1)
 
-    let grant = #"{"value":"{}","signature":"fixture"}"#
-    let twitch = "{\"data\":{\"streamPlaybackAccessToken\":\(grant),\"videoPlaybackAccessToken\":\(grant)}}"
-    for (provider, key, path, expectedLive) in [
-      (StreamSource.Provider.twitch, "channel", "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8", true),
-      (.twitchVod, "v123", "usher.ttvnw.net/vod/123.m3u8", false),
-    ] {
-      PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), path: (200, master)])
-      let media = try await resolver.resolve(StreamSource(provider: provider, key: key))
-      precondition(media.isLive == expectedLive && media.variants?.count == 1)
-      precondition(PlaybackProtocol.count == 2, "Twitch already supplies quality choices")
-    }
-    let clip = "{\"data\":{\"clip\":{\"playbackAccessToken\":\(grant),\"assets\":[{\"aspectRatio\":1.777,\"videoQualities\":[{\"quality\":\"1080\",\"sourceURL\":\"https://video.example/clip.mp4\",\"codecs\":\"avc1.640028,mp4a.40.2\"}]}]}}}"
-    PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, clip)])
-    let clipMedia = try await resolver.resolve(StreamSource(provider: .twitchClip, key: "clip"))
-    precondition(clipMedia.isLive == false && clipMedia.variants?.first?.height == 1080 && PlaybackProtocol.count == 1)
+    let twitch = #"{"data":{"streamPlaybackAccessToken":{"value":"{}","signature":"fixture"}}}"#
+    PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, master)])
+    let media = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))
+    precondition(media.variants?.count == 1 && PlaybackProtocol.count == 2)
+    PlaybackProtocol.prepare(["gql.twitch.tv/gql": (401, "")])
+    do {
+      _ = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))
+      preconditionFailure("Authorization failures must not become retry loops")
+    } catch TwitchFailure.signIn {}
+    precondition(PlaybackProtocol.count == 1)
 
-    let player = #"{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"video","isLive":true},"streamingData":{"hlsManifestUrl":"https://video.example/master.m3u8"}}"#
-    PlaybackProtocol.prepare(["www.youtube.com/watch": (200, "var ytInitialPlayerResponse = " + player), "video.example/master.m3u8": (200, master)])
+    let player = #"{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"video"},"streamingData":{"hlsManifestUrl":"https://manifest.googlevideo.com/master.m3u8"}}"#
+    PlaybackProtocol.prepare(["www.youtube.com/watch": (200, "var ytInitialPlayerResponse = " + player), "manifest.googlevideo.com/master.m3u8": (200, master)])
     let youtube = try await resolver.resolve(StreamSource(provider: .youtube, key: "video"))
-    precondition(youtube.isLive == true && youtube.variants?.count == 1 && PlaybackProtocol.count == 2)
-    // Reused bootstrap: one failed client must not hide the other client's media.
-    PlaybackProtocol.prepare(["www.youtube.com/youtubei/v1/player:101": (403, ""), "www.youtube.com/youtubei/v1/player:3": (200, player), "video.example/master.m3u8": (200, master)])
+    precondition(youtube.variants?.count == 1 && PlaybackProtocol.count == 2)
+    PlaybackProtocol.prepare(["www.youtube.com/youtubei/v1/player:101": (403, ""), "www.youtube.com/youtubei/v1/player:3": (200, player), "manifest.googlevideo.com/master.m3u8": (200, master)])
     let fallback = try await resolver.resolve(StreamSource(provider: .youtube, key: "video"))
-    precondition(fallback.isLive == true && fallback.variants?.count == 1)
+    precondition(fallback.variants?.count == 1, "One failed client must not hide the other client's media")
 
-    PlaybackProtocol.prepare(["player.vimeo.com/video/123/config": (200, #"{"request":{"files":{"progressive":[{"height":360,"url":"https://video.example/360.mp4"},{"height":1080,"url":"https://video.example/1080.mp4"},{"height":720,"url":"https://video.example/720.mp4"}]}}}"#)])
-    let vimeo = try await resolver.resolve(StreamSource(provider: .vimeo, key: "123"))
-    precondition(vimeo.url.path == "/1080.mp4" && PlaybackProtocol.count == 1)
-    let progressive = #"{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"recording","isLive":false},"streamingData":{"formats":[{"mimeType":"video/mp4","height":360,"url":"https://video.example/360.mp4"},{"mimeType":"video/mp4","height":1080,"url":"https://video.example/1080.mp4"},{"mimeType":"audio/mp4","url":"https://video.example/audio.mp4"}]}}"#
-    PlaybackProtocol.prepare(["www.youtube.com/watch": (200, "var ytInitialPlayerResponse = " + progressive)])
-    let freshResolver = PlaybackResolver(configuration: config)
-    let video = try await freshResolver.resolve(StreamSource(provider: .youtube, key: "recording"))
-    precondition(video.url.path == "/1080.mp4" && video.isLive == false && video.variants?.isEmpty == true)
-    precondition(PlaybackProtocol.count == 1, "Progressive video needs no HLS discovery")
-    print("Passed resolver regressions for every provider, HLS request reuse, cancellation, and offline/protected sources")
+    // Cancellation may finish URLProtocol callbacks after the task returns; test it last.
+    let cancelled = Task { try await resolver.variants(at: url) }
+    cancelled.cancel()
+    do {
+      _ = try await cancelled.value
+      preconditionFailure("Playlist requests must propagate cancellation")
+    } catch is CancellationError {} catch let error as URLError {
+      precondition(error.code == .cancelled)
+    }
+    print("Passed all-provider resolver, request-count, authorization, offline, and cancellation regressions")
   }
 }

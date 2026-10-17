@@ -9,7 +9,20 @@ actor YouTubeResolver {
     let created = Date()
   }
 
-  private typealias PlayerResponse = YouTubePlayerResponse
+  private struct PlayerResponse: Decodable, Sendable {
+    struct Status: Decodable, Sendable {
+      let status: String
+    }
+    struct Details: Decodable, Sendable {
+      let videoId: String
+    }
+    struct Streaming: Decodable, Sendable {
+      let hlsManifestUrl: String?
+    }
+    let playabilityStatus: Status?
+    let videoDetails: Details?
+    let streamingData: Streaming?
+  }
 
   private enum Client: CaseIterable, Sendable {
     // Both expose ordinary live HLS without the iOS client's delayed token requirement.
@@ -98,7 +111,7 @@ actor YouTubeResolver {
   private func resolve(videoID: String, bootstrap: Bootstrap, page: PlayerResponse?)
     async throws -> PlaybackMedia
   {
-    // Preserve directly supplied media, including ordinary YouTube videos.
+    // Prefer the page's directly supplied live HLS.
     if let page, page.videoDetails?.videoId == videoID,
       let media = try? await playable(page)
     {
@@ -139,10 +152,6 @@ actor YouTubeResolver {
       ?? PlaybackResolver.jsonString(in: html, named: "jsUrl")
     var timestamp: Int?
     let suppliedMedia = player?.streamingData?.hlsManifestUrl != nil
-      || (player?.streamingData?.formats?.contains {
-        $0.url != nil && ($0.mimeType ?? "").hasPrefix("video/mp4")
-      } == true
-        && player?.isLive != true)
     if !suppliedMedia, player?.videoDetails != nil,
       let script, let url = URL(string: script, relativeTo: url)?.absoluteURL,
       url.scheme == "https", url.host == "www.youtube.com",
@@ -206,26 +215,12 @@ actor YouTubeResolver {
     guard let status = response.playabilityStatus, status.status == "OK" else {
       throw response.playabilityStatus.map(failure) ?? PlaybackFailure.unavailable
     }
-    if let address = response.streamingData?.hlsManifestUrl, let url = Self.mediaURL(address) {
-      let text = String(decoding: try await fetch(URLRequest(url: url)), as: UTF8.self)
-      guard text.hasPrefix("#EXTM3U") else { throw PlaybackFailure.unavailable }
-      let variants = HLSPlaylist.variants(text, base: url)
-      guard !variants.isEmpty || HLSPlaylist.isLive(text) != nil else {
-        throw PlaybackFailure.unavailable
-      }
-      return PlaybackMedia(
-        url, expires: Self.expiry(url), isLive: response.liveStatus(in: text),
-        variants: variants)
-    }
-    // Progressive formats cannot replace an ongoing livestream's HLS transport.
-    guard response.isLive != true else { throw PlaybackFailure.unavailable }
-    let format = (response.streamingData?.formats ?? []).filter {
-      ($0.mimeType ?? "").hasPrefix("video/mp4") && $0.url != nil
-    }.max { ($0.height ?? 0) < ($1.height ?? 0) }
-    guard let address = format?.url, let url = Self.mediaURL(address) else {
+    guard let address = response.streamingData?.hlsManifestUrl, let url = Self.mediaURL(address) else {
       throw PlaybackFailure.unavailable
     }
-    return PlaybackMedia(url, expires: Self.expiry(url), isLive: false, variants: [])
+    let text = String(decoding: try await fetch(URLRequest(url: url)), as: UTF8.self)
+    guard text.hasPrefix("#EXTM3U") else { throw PlaybackFailure.unavailable }
+    return PlaybackMedia(url, variants: HLSPlaylist.variants(text, base: url))
   }
 
   private func fetch(_ request: URLRequest) async throws -> Data {
@@ -268,14 +263,4 @@ actor YouTubeResolver {
     return Int(script[range])
   }
 
-  private static func expiry(_ url: URL) -> Date? {
-    let segments = url.path.split(separator: "/")
-    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
-      .first(where: { $0.name == "expire" })?.value
-    let value = segments.firstIndex(of: "expire").flatMap { index in
-      index + 1 < segments.count ? Double(segments[index + 1]) : nil
-    } ?? query.flatMap(Double.init)
-    guard let value, value.isFinite, value > 0 else { return nil }
-    return Date(timeIntervalSince1970: value)
-  }
 }

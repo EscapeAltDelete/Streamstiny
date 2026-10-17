@@ -13,11 +13,10 @@ import UIKit
   private(set) var error: Error?
 
   init(
-    url: URL, variant: HLSVariant?, headers: [String: String], playing: Bool, startTime: Double, changed: @escaping () -> Void
+    url: URL, variant: HLSVariant?, headers: [String: String], playing: Bool, changed: @escaping () -> Void
   ) {
     let options = HLSOptions(variant: variant, headers: headers)
     if url.host == "127.0.0.1" { options.preferredForwardBufferDuration = 2 }
-    options.startPlayTime = max(0, startTime)
     options.isSeekedAutoPlay = playing
     engine = KSMEPlayer(url: url, options: options)
     wantsPlayback = playing

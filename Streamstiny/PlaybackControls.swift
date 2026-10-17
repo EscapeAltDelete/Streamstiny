@@ -9,7 +9,6 @@ import Observation
   var menuPresented = false {
     didSet { if menuPresented { show() } else { arm() } }
   }
-  private var scrubbing = false
   private var beforeFirstTap = false
   private var timer: Task<Void, Never>?
   private let timeout: Duration = .seconds(3)
@@ -30,11 +29,6 @@ import Observation
     arm()
   }
 
-  func scrub(_ editing: Bool) {
-    scrubbing = editing
-    show()
-  }
-
   func cancel() {
     timer?.cancel()
     timer = nil
@@ -42,7 +36,7 @@ import Observation
 
   private func arm() {
     cancel()
-    guard visible, !settingsPresented, !menuPresented, !scrubbing else { return }
+    guard visible, !settingsPresented, !menuPresented else { return }
     let timeout = timeout
     timer = Task { [weak self] in
       do { try await Task.sleep(for: timeout) } catch { return }

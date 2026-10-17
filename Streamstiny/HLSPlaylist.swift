@@ -20,19 +20,6 @@ struct HLSVariant: Identifiable, Equatable, Sendable {
 enum HLSPlaylist {
   private static let attributePattern = try? NSRegularExpression(
     pattern: #"([A-Z0-9-]+)=("[^"]*"|[^,\r\n]*)"#)
-  // An ended or immutable media playlist does not need the live decoder.
-  static func isLive(_ text: String) -> Bool? {
-    guard text.hasPrefix("#EXTM3U") else { return nil }
-    let lines = text.components(separatedBy: .newlines).map {
-      $0.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    if lines.contains("#EXT-X-ENDLIST") || lines.contains("#EXT-X-PLAYLIST-TYPE:VOD") {
-      return false
-    }
-    if lines.contains(where: { $0.hasPrefix("#EXT-X-STREAM-INF:") }) { return nil }
-    return lines.contains(where: { $0.hasPrefix("#EXT-X-TARGETDURATION:") }) ? true : nil
-  }
-
   static func attributes(_ line: String) -> [String: String] {
     guard let regex = attributePattern else { return [:] }
     var result: [String: String] = [:]

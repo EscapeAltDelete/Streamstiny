@@ -69,7 +69,7 @@ jobs:
           persist-credentials: false
       - name: Check playback handling
         run: |
-          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{HLSPlaylist,YouTubePlayerResponse,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
+          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackTiming,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
           "$RUNNER_TEMP/playback-tests"
       # All branches restore; only successful main builds save shared caches.
       - name: Restore validated package for these build inputs

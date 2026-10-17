@@ -198,7 +198,7 @@ enum DirectoryEvent: Sendable {
     updateDirectory()
     if chooseInitialLive,
       let first = directory.first(where: {
-        $0.live && ![.twitch, .twitchVod, .twitchClip].contains($0.source.provider)
+        $0.live && $0.source.provider != .twitch
       })
     {
       select(first.source)

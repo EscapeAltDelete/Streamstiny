@@ -11,9 +11,6 @@ import SwiftUI
   private(set) var loading = false
   private(set) var buffering = false
   private(set) var playing = false
-  private(set) var seconds = 0.0
-  private(set) var duration = 0.0
-  private(set) var live = false
   private(set) var error: String?
   private(set) var variants: [HLSVariant] = []
   private(set) var qualityID: String?
@@ -33,10 +30,7 @@ import SwiftUI
   private(set) var playbackRate: Float = 0
   private struct NowPlayingState: Equatable {
     let title: String
-    let elapsedSecond: Double
-    let duration: Double
     let rate: Float
-    let live: Bool
   }
   private var nowPlayingState: NowPlayingState?
   private var catchUpTask: Task<Void, Never>?
@@ -60,7 +54,6 @@ import SwiftUI
   private var source: StreamSource?
   private var observer: PlaybackTimeObservation?
   private var itemObserver: NSKeyValueObservation?
-  private var renewal: Task<Void, Never>?
   private var twitchGateway: TwitchPlaylistGateway?
   private var retry: Task<Void, Never>?
   private var retryVersion = 0
@@ -109,7 +102,6 @@ import SwiftUI
     discovery?.cancel()
     discovering = false
     switching = false
-    let oldTime = seconds
     if !force {
       qualityID = nil
       edge = nil
@@ -124,12 +116,10 @@ import SwiftUI
       failures = 0
       cancelRetry()
     }
-    let wasLive = live
     self.source = source
     title = source.title
     error = nil
     loading = true
-    renewal?.cancel()
     itemObserver = nil
     if !force {
       hls?.stop()
@@ -138,26 +128,12 @@ import SwiftUI
       twitchGateway = nil
       player.pause()
       player.replaceCurrentItem(with: nil)
-      seconds = 0
-      duration = 0
-      live = false
       playing = false
       buffering = false
     }
     do {
       let media = try await resolver.resolve(source)
       var choices = media.variants
-      let useLiveDecoder: Bool
-      if source.provider == .youtube {
-        // Native HLS handles YouTube adaptation without FFmpeg rendition probing.
-        useLiveDecoder = false
-      } else if let isLive = media.isLive {
-        useLiveDecoder = isLive
-      } else {
-        let inspection = try await resolver.inspectHLS(media.url)
-        useLiveDecoder = inspection.live
-        choices = inspection.variants
-      }
       try Task.checkCancellation()
       guard version == generation else { return }
       self.media = media
@@ -195,18 +171,13 @@ import SwiftUI
       let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
       let playbackURL = await gateway?.url(for: remoteURL) ?? remoteURL
       guard version == generation, !Task.isCancelled else { gateway?.stop(); return }
-      if useLiveDecoder {
-        installHLS(playbackURL, variant: variant, startTime: force && !wasLive ? oldTime : 0)
+      if source.provider != .youtube {
+        installHLS(playbackURL, variant: variant)
       } else {
         hls?.stop()
         hls = nil
-        let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL,
-          headers: media.headers, adaptive: source.provider == .youtube)
+        let item = Self.makeItem(master: media.url, variant: variant, headers: media.headers)
         player.replaceCurrentItem(with: item)
-        if force, !wasLive, oldTime > 0 {
-          await player.seek(to: CMTime(seconds: oldTime, preferredTimescale: 600))
-          guard version == generation, !Task.isCancelled else { return }
-        }
         if wantsPlayback { player.play() }
         itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
           Task { @MainActor [weak self] in self?.itemChanged() }
@@ -230,17 +201,6 @@ import SwiftUI
         }
         configureRemoteCommands()
       }
-      // Existing live CDN playback can outlive the grant used to open it.
-      // Recover on actual failure instead of rebuilding a healthy stream on a timer.
-      if !useLiveDecoder, media.isLive != true, let expires = media.expires {
-        let delay = max(15, expires.timeIntervalSinceNow - 30)
-        renewal = Task { [weak self] in
-          do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-          guard let self, self.generation == version else { return }
-          self.renewal = nil
-          await self.load(source, force: true)
-        }
-      }
       loading = false
       stall?.cancel()
       stall = nil
@@ -251,18 +211,13 @@ import SwiftUI
       self.error = error.localizedDescription
     }
   }
-  static func makeItem(master: URL, variant: HLSVariant?, edgeURL: URL? = nil,
-    headers: [String: String] = [:], adaptive: Bool = false) -> AVPlayerItem {
-    let url = adaptive ? master : playbackURL(master: master, variant: variant, edgeURL: edgeURL)
+  private static func makeItem(master: URL, variant: HLSVariant?, headers: [String: String]) -> AVPlayerItem {
     let item = AVPlayerItem(
       asset: AVURLAsset(
-        url: url,
+        url: master,
         options: [AVURLAssetHTTPUserAgentKey: headers["User-Agent"] ?? PlaybackResolver.userAgent,
           "AVURLAssetHTTPHeaderFieldsKey": headers]))
-    // Keep the master for alternate media groups and YouTube bitrate adaptation.
-    if let variant, variant.externalMedia || adaptive {
-      limitQuality(of: item, to: variant)
-    }
+    limitQuality(of: item, to: variant)
     return item
   }
 
@@ -276,7 +231,7 @@ import SwiftUI
     edgeURL ?? variant.flatMap { $0.externalMedia ? nil : $0.url } ?? master
   }
 
-  private func installHLS(_ url: URL, variant: HLSVariant?, startTime: Double = 0) {
+  private func installHLS(_ url: URL, variant: HLSVariant?) {
     hls?.stop()
     player.pause()
     player.replaceCurrentItem(with: nil)
@@ -284,7 +239,7 @@ import SwiftUI
     pip?.stopPictureInPicture()
     pip = nil
     pipLayer = nil
-    hls = HLSPlayback(url: url, variant: variant, headers: media?.headers ?? [:], playing: wantsPlayback, startTime: startTime) {
+    hls = HLSPlayback(url: url, variant: variant, headers: media?.headers ?? [:], playing: wantsPlayback) {
       [weak self] in
       self?.updateTime()
     }
@@ -324,7 +279,7 @@ import SwiftUI
   }
 
   private func adjustAutomaticCatchUp() {
-    guard automaticCatchUp, live, wantsPlayback, playing, !loading, !switching,
+    guard automaticCatchUp, wantsPlayback, playing, !loading, !switching,
       !catchingUp, error == nil, hls?.error == nil
     else {
       setAutomaticCatchUp(false)
@@ -386,18 +341,13 @@ import SwiftUI
           edgeURL = try await resolver.verifiedEdge(requestedEdge, variant: variant)
         }
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
-        let time = seconds
-        let restoreTime = !live && time > 0
         if hls != nil {
           let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
           let playbackURL = await twitchGateway?.url(for: remoteURL) ?? remoteURL
           guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
-          installHLS(
-            playbackURL,
-            variant: variant, startTime: restoreTime ? time : 0)
+          installHLS(playbackURL, variant: variant)
         } else {
-          let item = Self.makeItem(master: media.url, variant: variant, edgeURL: edgeURL,
-            headers: media.headers, adaptive: source?.provider == .youtube)
+          let item = Self.makeItem(master: media.url, variant: variant, headers: media.headers)
           player.replaceCurrentItem(with: item)
           itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.itemChanged() }
@@ -408,9 +358,6 @@ import SwiftUI
         failures = 0
         stall?.cancel()
         stall = nil
-        if restoreTime, hls == nil {
-          await player.seek(to: CMTime(seconds: time, preferredTimescale: 600))
-        }
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
         if wantsPlayback {
           if let hls { hls.play() } else { player.play() }
@@ -450,15 +397,6 @@ import SwiftUI
     setPlayback(wantsPlayback)
     updateTime()
   }
-  func seek(_ seconds: Double) {
-    endCatchUp()
-    guard seconds.isFinite else { return }
-    if let hls {
-      hls.engine.seek(time: max(0, seconds)) { _ in }
-    } else {
-      player.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
-    }
-  }
   func stop() {
     endCatchUp()
     setAutomaticCatchUp(false)
@@ -470,8 +408,6 @@ import SwiftUI
     selection = nil
     discovering = false
     switching = false
-    renewal?.cancel()
-    renewal = nil
     cancelRetry()
     itemObserver = nil
     statusObserver = nil
@@ -499,9 +435,6 @@ import SwiftUI
     waitingForAds = false
     playing = false
     playbackRate = 0
-    seconds = 0
-    duration = 0
-    live = false
     resolution = ""
     buffered = 0
     error = nil
@@ -571,13 +504,10 @@ import SwiftUI
     }
     if let hls {
       let engine = hls.engine
-      seconds = max(0, engine.currentPlaybackTime)
-      duration = max(0, engine.duration)
-      live = media?.isLive ?? (duration == 0)
       playing = engine.isPlaying && engine.loadState == .playable
       playbackRate = playing ? engine.playbackRate : 0
       buffering = wantsPlayback && engine.loadState != .playable
-      buffered = max(0, engine.playableTime - seconds)
+      buffered = max(0, engine.playableTime - engine.currentPlaybackTime)
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
       if hls.error != nil { recoverFailure() }
@@ -587,10 +517,6 @@ import SwiftUI
       }
     } else if let item = player.currentItem {
       let time = player.currentTime().seconds
-      seconds = time.isFinite ? max(0, time) : 0
-      let length = item.duration.seconds
-      duration = length.isFinite ? max(0, length) : 0
-      live = media?.isLive ?? (length.isInfinite || item.duration.isIndefinite)
       playing = player.timeControlStatus == .playing
       playbackRate = playing ? player.rate : 0
       buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
@@ -614,18 +540,14 @@ import SwiftUI
   }
 
   private func updateNowPlaying() {
-    let state = NowPlayingState(
-      title: title, elapsedSecond: seconds.rounded(.down), duration: duration,
-      rate: playbackRate, live: live)
+    let state = NowPlayingState(title: title, rate: playbackRate)
     guard nowPlayingState != state else { return }
     nowPlayingState = state
-    var info: [String: Any] = [
+    let info: [String: Any] = [
       MPMediaItemPropertyTitle: title,
-      MPNowPlayingInfoPropertyElapsedPlaybackTime: seconds,
       MPNowPlayingInfoPropertyPlaybackRate: Double(playbackRate),
-      MPNowPlayingInfoPropertyIsLiveStream: live,
+      MPNowPlayingInfoPropertyIsLiveStream: true,
     ]
-    if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
     MPNowPlayingInfoCenter.default().nowPlayingInfo = info
   }
   func beginCatchUp() {
@@ -712,18 +634,7 @@ import SwiftUI
         return .success
       }))
     }
-    commands.append(
-      PlaybackCommandTarget(
-        command: center.changePlaybackPositionCommand,
-        token: center.changePlaybackPositionCommand.addTarget { [weak self] event in
-          guard let event = event as? MPChangePlaybackPositionCommandEvent else {
-            return .commandFailed
-          }
-          let time = event.positionTime
-          Task { @MainActor in self?.seek(time) }
-          return .success
-        }
-      ))
+    center.changePlaybackPositionCommand.isEnabled = false
   }
 }
 
@@ -812,7 +723,7 @@ struct PlayerView: View {
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }
     .onChange(of: highestQuality) { _, _ in configurePlayback() }
     .onReceive(NotificationCenter.default.publisher(for: .twitchAccountChanged)) { _ in
-      if [.twitch, .twitchVod, .twitchClip].contains(source.provider) { playback.reload() }
+      if source.provider == .twitch { playback.reload() }
     }
     .onChange(of: scenePhase) { _, phase in
       if phase == .active {
@@ -863,40 +774,14 @@ struct PlayerView: View {
           }.accessibilityLabel("Playback settings")
         }
         Spacer(minLength: 4)
-        HStack(spacing: 30) {
-          if !playback.live {
-            Button {
-              playback.seek(playback.seconds - 10)
-              controls.show()
-            } label: {
-              Image(systemName: "gobackward.10").frame(width: 44, height: 44)
-            }.accessibilityLabel("Back 10 seconds")
-          }
-          Button {
-            playback.toggle()
-            controls.show()
-          } label: {
-            Image(systemName: playback.playing || playback.buffering ? "pause.fill" : "play.fill")
-              .font(.title).frame(width: 52, height: 52)
-          }.accessibilityLabel(playback.playing || playback.buffering ? "Pause" : "Play")
-          if !playback.live {
-            Button {
-              playback.seek(playback.seconds + 10)
-              controls.show()
-            } label: {
-              Image(systemName: "goforward.10").frame(width: 44, height: 44)
-            }.accessibilityLabel("Forward 10 seconds")
-          }
-        }
+        Button {
+          playback.toggle()
+          controls.show()
+        } label: {
+          Image(systemName: playback.playing || playback.buffering ? "pause.fill" : "play.fill")
+            .font(.title).frame(width: 52, height: 52)
+        }.accessibilityLabel(playback.playing || playback.buffering ? "Pause" : "Play")
         Spacer(minLength: 4)
-        if playback.duration > 0 && !playback.live {
-          Slider(
-            value: Binding(
-              get: { min(playback.seconds, playback.duration) },
-              set: { playback.seek($0) }), in: 0...playback.duration,
-            onEditingChanged: { controls.scrub($0) }
-          ).accessibilityLabel("Video position")
-        }
       }.padding(8).foregroundStyle(.white).tint(.white)
     }
   }

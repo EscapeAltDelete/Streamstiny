@@ -4,10 +4,7 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
   enum Provider: String, CaseIterable, Codable, Sendable {
     case youtube = "YouTube"
     case twitch = "Twitch"
-    case twitchVod = "Twitch VOD"
-    case twitchClip = "Twitch clip"
     case kick = "Kick"
-    case kickVod = "Kick VOD"
     case rumble = "Rumble"
     case angelthump = "AngelThump"
     case vimeo = "Vimeo"
@@ -15,9 +12,6 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
     case direct = "Direct video"
     var platform: String {
       switch self {
-      case .twitchVod: return "twitch-vod"
-      case .twitchClip: return "twitch-clip"
-      case .kickVod: return "kick-vod"
       case .direct: return "direct"
       default: return rawValue.lowercased()
       }
@@ -38,7 +32,7 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
   let provider: Provider
   let key: String
   var id: String {
-    "\(provider.platform):\(provider == .youtube || provider == .direct || provider == .twitchClip ? key : key.lowercased())"
+    "\(provider.platform):\(provider == .youtube || provider == .direct ? key : key.lowercased())"
   }
   var title: String {
     "\(provider.rawValue) · \(provider == .direct ? URL(string: key)?.host ?? "Stream" : key)"
@@ -66,13 +60,7 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
       }
       return URL(string: "https://www.youtube.com/watch?v=\(key)")
     case .twitch: return URL(string: "https://www.twitch.tv/\(key)")
-    case .twitchVod:
-      return URL(string: "https://www.twitch.tv/videos/\(key.drop(while: { $0 == "v" }))")
-    case .twitchClip: return URL(string: "https://clips.twitch.tv/\(key)")
     case .kick: return URL(string: "https://kick.com/\(key)")
-    case .kickVod:
-      let parts = key.split(separator: "/")
-      return parts.count == 2 ? URL(string: "https://kick.com/\(parts[0])/videos/\(parts[1])") : nil
     case .rumble: return URL(string: "https://rumble.com/embed/\(key)/")
     case .angelthump: return URL(string: "https://angelthump.com/\(key)")
     case .vimeo: return URL(string: "https://vimeo.com/\(key)")
@@ -102,7 +90,7 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
           in: CharacterSet(charactersIn: "/"))
         chosen = platform
       } else if chosen == .direct
-        || ["m3u8", "mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+        || url.pathExtension.lowercased() == "m3u8"
       {
         chosen = .direct
         key = input
@@ -114,7 +102,7 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
             key = path.first ?? ""
           } else if let video = query.first(where: { $0.name == "v" })?.value {
             key = video
-          } else if path.count >= 2, ["channel", "live", "shorts", "embed"].contains(path[0]) {
+          } else if path.count >= 2, ["channel", "live", "embed"].contains(path[0]) {
             key = path[1]
           } else if let handle = path.first, handle.hasPrefix("@"),
             path.count == 1 || (path.count == 2 && path[1] == "live")
@@ -123,20 +111,12 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
           } else {
             throw SourceError.invalid
           }
-        case "twitch.tv", "www.twitch.tv", "player.twitch.tv", "clips.twitch.tv":
-          if host == "clips.twitch.tv" || path.contains("clip") {
-            chosen = .twitchClip
-            key = query.first(where: { $0.name == "clip" })?.value ?? path.last ?? ""
-          } else if path.first == "videos" || query.contains(where: { $0.name == "video" }) {
-            chosen = .twitchVod
-            key = query.first(where: { $0.name == "video" })?.value ?? "v\(path.last ?? "")"
-          } else {
-            chosen = .twitch
-            key = query.first(where: { $0.name == "channel" })?.value ?? path.first ?? ""
-          }
+        case "twitch.tv", "www.twitch.tv", "player.twitch.tv":
+          chosen = .twitch
+          key = query.first(where: { $0.name == "channel" })?.value ?? path.first ?? ""
         case "kick.com", "www.kick.com", "player.kick.com":
-          chosen = path.count >= 3 && path[1] == "videos" ? .kickVod : .kick
-          key = chosen == .kickVod ? "\(path[0])/\(path[2])" : path.first ?? ""
+          chosen = .kick
+          key = path.first ?? ""
         case "angelthump.com", "www.angelthump.com", "player.angelthump.com":
           chosen = .angelthump
           key = query.first(where: { $0.name == "channel" })?.value ?? path.first ?? ""
@@ -158,11 +138,11 @@ struct StreamSource: Identifiable, Equatable, Codable, Sendable {
     guard let chosen else { throw SourceError.invalid }
     if chosen == .direct {
       guard let url = URL(string: key), url.scheme == "https", url.host != nil,
-        ["m3u8", "mp4", "mov", "m4v"].contains(url.pathExtension.lowercased())
+        url.pathExtension.lowercased() == "m3u8"
       else { throw SourceError.invalid }
     } else {
       let segments = key.split(separator: "/", omittingEmptySubsequences: false)
-      let expected = chosen == .kickVod ? 2 : chosen == .facebook ? segments.count : 1
+      let expected = chosen == .facebook ? segments.count : 1
       let youtubeHandle = chosen == .youtube && key.hasPrefix("@")
       guard !key.isEmpty, key.count <= 150, segments.count == expected,
         segments.allSatisfy({
