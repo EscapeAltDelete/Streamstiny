@@ -60,6 +60,7 @@ jobs:
           fi
           python3 scripts/compact_packages.py
           python3 scripts/patch_playback.py
+          du -sk build/SourcePackages/repositories/* build/SourcePackages/checkouts/* build/SourcePackages/checkouts/*/.git
       - name: Run existing tests
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
