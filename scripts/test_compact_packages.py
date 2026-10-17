@@ -78,3 +78,26 @@ class CompactPackagesTests(unittest.TestCase):
     def test_mismatched_pins_are_rejected(self):
         git(self.checkout, "checkout", "--detach", "--quiet", self.later_revision)
         with self.assertRaises(AssertionError): compact(self.cache)
+
+    def test_source_history_preserves_patches_untracked_files_and_timestamps(self):
+        repository = self.cache / "repositories/KSPlayer.git"
+        checkout = self.cache / "checkouts/KSPlayer"
+        subprocess.run(["git", "clone", "--quiet", "--bare", str(self.source), str(repository)], check=True)
+        subprocess.run(["git", "clone", "--quiet", "--shared", str(repository), str(checkout)], check=True)
+        git(checkout, "checkout", "--detach", "--quiet", self.revision)
+        lock = self.cache / "Package.resolved"
+        data = json.loads(lock.read_text())
+        data["pins"].append(dict(data["pins"][0], identity="ksplayer"))
+        lock.write_text(json.dumps(data))
+        binary = checkout / "Sources/Example.xcframework/ios-arm64/binary"
+        binary.write_bytes(b"existing dependency patch")
+        (checkout / "untracked.txt").write_text("preserve me")
+        before = {path.relative_to(checkout): (path.read_bytes(), path.stat().st_mtime_ns)
+                  for path in checkout.rglob("*") if path.is_file() and ".git" not in path.parts}
+        compact(self.cache, "ksplayer")
+        self.assertEqual(before, {path.relative_to(checkout): (path.read_bytes(), path.stat().st_mtime_ns)
+                                 for path in checkout.rglob("*") if path.is_file() and ".git" not in path.parts})
+        self.assertEqual(git(checkout, "rev-list", "--count", "HEAD"), "1")
+        git(checkout, "fsck", "--full")
+        git(repository, "fsck", "--full")
+        compact(self.cache, "ksplayer")

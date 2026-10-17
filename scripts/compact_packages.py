@@ -1,4 +1,4 @@
-"""Compact the pinned FFmpegKit cache without changing its revision or iOS binaries."""
+"""Compact pinned playback caches without changing revisions, edits or iOS binaries."""
 import json
 from pathlib import Path
 import plistlib
@@ -11,18 +11,20 @@ def git(directory, *args):
     return subprocess.check_output(["git", "-C", str(directory), *args], text=True).strip()
 
 
-def compact(root):
+def compact(root, identity="ffmpegkit"):
     root = root.resolve()
     lock = json.loads((root / "Package.resolved").read_text())
-    pin = next(pin for pin in lock["pins"] if pin["identity"] == "ffmpegkit")
-    checkout = root / "checkouts/FFmpegKit"
+    pin = next(pin for pin in lock["pins"] if pin["identity"] == identity)
+    checkout = next(path for path in (root / "checkouts").iterdir() if path.name.lower() == identity)
     revision = pin["state"]["revision"]
     assert git(checkout, "rev-parse", "HEAD") == revision, "Checkout must match Package.resolved"
-    assert not git(checkout, "status", "--porcelain"), "Preserve dependency edits"
+    state = git(checkout, "status", "--porcelain")
+    difference = git(checkout, "diff", "--binary", "HEAD")
+    assert identity != "ffmpegkit" or not state, "Preserve dependency edits"
     gitdir = Path(git(checkout, "rev-parse", "--absolute-git-dir"))
     patterns = ["/*"]
     slices = {}
-    for framework in sorted((checkout / "Sources").glob("*.xcframework")):
+    for framework in sorted((checkout / "Sources").glob("*.xcframework")) if identity == "ffmpegkit" else []:
         info = plistlib.loads((framework / "Info.plist").read_bytes())
         selected = [entry["LibraryIdentifier"] for entry in info["AvailableLibraries"]
                     if entry["SupportedPlatform"] == "ios" and not entry.get("SupportedPlatformVariant")
@@ -35,11 +37,11 @@ def compact(root):
     sparse_file = gitdir / "info/sparse-checkout"
     partial = git(checkout, "config", "--default=false", "--get", "remote.origin.promisor") == "true"
     if partial and (gitdir / "shallow").exists() and sparse_file.exists() and sparse_file.read_text() == sparse:
-        print("Verified compact FFmpegKit cache at", revision)
+        print("Verified compact", checkout.name, "cache at", revision)
         return
     repositories = [path for path in (root / "repositories").iterdir()
-                    if path.name.lower().startswith("ffmpegkit") and path.is_dir()]
-    assert len(repositories) == 1, "Expected the pinned FFmpegKit repository"
+                    if path.name.lower().startswith(identity) and path.is_dir()]
+    assert len(repositories) == 1, "Expected one pinned dependency repository"
     repository = repositories[0]
     with tempfile.TemporaryDirectory(dir=root.parent, prefix="compact-") as temporary:
         temporary = Path(temporary)
@@ -89,17 +91,25 @@ def compact(root):
             backup.rename(repository)
             raise
         original = temporary / "original-checkout"
+        # Source-only packages keep their files and patches, including input mtimes.
+        target = checkout if slices else gitdir
+        incoming = replacement if slices else replacement / ".git"
         try:
-            checkout.rename(original)
-            replacement.rename(checkout)
+            target.rename(original)
+            incoming.rename(target)
+            assert git(checkout, "status", "--porcelain") == state
+            assert git(checkout, "diff", "--binary", "HEAD") == difference
         except BaseException:
             if original.exists():
-                original.rename(checkout)
+                if target.exists(): shutil.rmtree(target)
+                original.rename(target)
             shutil.rmtree(repository)
             backup.rename(repository)
             raise
-    print("Compacted FFmpegKit at", revision, "for iOS ARM64")
+    print("Compacted", checkout.name, "at", revision, "for iOS ARM64")
 
 
 if __name__ == "__main__":
-    compact(Path("build/SourcePackages"))
+    root = Path("build/SourcePackages")
+    compact(root, "ksplayer")
+    compact(root)
