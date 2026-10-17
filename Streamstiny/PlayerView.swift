@@ -33,8 +33,6 @@ import SwiftUI
     let rate: Float
   }
   private var nowPlayingState: NowPlayingState?
-  private var catchUpTask: Task<Void, Never>?
-  private var previousWaitingPolicy = true
   private var previousDefaultRate: Float = 1
   private var rateObserver: NSKeyValueObservation?
   private var media: PlaybackMedia?
@@ -67,6 +65,8 @@ import SwiftUI
   override init() {
     player = AVPlayer()
     super.init()
+    NotificationCenter.default.addObserver(self, selector: #selector(itemEnded(_:)),
+      name: .AVPlayerItemDidPlayToEndTime, object: nil)
   }
 
   var pipActive: Bool {
@@ -176,7 +176,7 @@ import SwiftUI
       } else {
         hls?.stop()
         hls = nil
-        let item = Self.makeItem(master: media.url, variant: variant, headers: media.headers)
+        let item = AVPlayerItem(master: media.url, variant: variant, headers: media.headers)
         player.replaceCurrentItem(with: item)
         if wantsPlayback { player.play() }
         itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
@@ -211,24 +211,8 @@ import SwiftUI
       self.error = error.localizedDescription
     }
   }
-  private static func makeItem(master: URL, variant: HLSVariant?, headers: [String: String]) -> AVPlayerItem {
-    let item = AVPlayerItem(
-      asset: AVURLAsset(
-        url: master,
-        options: [AVURLAssetHTTPUserAgentKey: headers["User-Agent"] ?? PlaybackResolver.userAgent,
-          "AVURLAssetHTTPHeaderFieldsKey": headers]))
-    limitQuality(of: item, to: variant)
-    return item
-  }
-
-  private static func limitQuality(of item: AVPlayerItem, to variant: HLSVariant?) {
-    item.preferredMaximumResolution = CGSize(
-      width: CGFloat(variant?.width ?? 0), height: CGFloat(variant?.height ?? 0))
-    item.preferredPeakBitRate = variant?.bandwidth ?? 0
-  }
-
   static func playbackURL(master: URL, variant: HLSVariant?, edgeURL: URL?) -> URL {
-    edgeURL ?? variant.flatMap { $0.externalMedia ? nil : $0.url } ?? master
+    edgeURL ?? variant?.playbackURL(master: master) ?? master
   }
 
   private func installHLS(_ url: URL, variant: HLSVariant?) {
@@ -303,7 +287,7 @@ import SwiftUI
       hls.setRate(rate)
     } else {
       player.defaultRate = rate
-      if wantsPlayback, player.timeControlStatus == .playing { player.playImmediately(atRate: rate) }
+      if wantsPlayback, player.timeControlStatus == .playing { player.play() }
     }
     if playing { playbackRate = rate }
   }
@@ -320,8 +304,9 @@ import SwiftUI
     guard id != qualityID || requestedEdge != edge else { return }
     let variant = variants.first { $0.id == id }
     guard id == nil || variant != nil else { return }
-    if source?.provider == .youtube, let item = player.currentItem {
-      Self.limitQuality(of: item, to: variant)
+    if source?.provider == .youtube, let item = player.currentItem,
+      (item.asset as? AVURLAsset)?.url == Self.playbackURL(master: media.url, variant: variant, edgeURL: nil) {
+      item.limitQuality(to: variant)
       qualityID = id
       return
     }
@@ -347,7 +332,7 @@ import SwiftUI
           guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
           installHLS(playbackURL, variant: variant)
         } else {
-          let item = Self.makeItem(master: media.url, variant: variant, headers: media.headers)
+          let item = AVPlayerItem(master: media.url, variant: variant, headers: media.headers)
           player.replaceCurrentItem(with: item)
           itemObserver = item.observe(\.status, options: [.initial, .new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in self?.itemChanged() }
@@ -456,6 +441,31 @@ import SwiftUI
     updateTime()
   }
 
+  @objc nonisolated private func itemEnded(_ notification: Notification) {
+    guard let item = notification.object as? AVPlayerItem else { return }
+    Task { @MainActor [weak self] in
+      guard let self, self.player.currentItem === item else { return }
+      self.streamEnded()
+    }
+  }
+
+  private func streamEnded() {
+    guard !loading, error == nil else { return }
+    error = "This stream has ended."
+    wantsPlayback = false
+    endCatchUp()
+    setAutomaticCatchUp(false)
+    hls?.pause()
+    player.pause()
+    cancelRetry()
+    stall?.cancel()
+    stall = nil
+    playing = false
+    buffering = false
+    playbackRate = 0
+    updateNowPlaying()
+  }
+
   private func recoverFailure() {
     guard retry == nil, !loading else { return }
     if waitingForAds, let gateway = twitchGateway, let source, let media {
@@ -492,18 +502,13 @@ import SwiftUI
   }
   private func updateTime() {
     waitingForAds = twitchGateway?.waiting ?? false
-    // Reuse the decoder's existing tick to maintain a held rate as media arrives.
-    if catchingUp, wantsPlayback {
-      if let hls {
-        hls.setRate(2)
-      } else if player.currentItem?.status == .readyToPlay,
-        player.rate != 2 || player.timeControlStatus == .paused
-      {
-        player.playImmediately(atRate: 2)
-      }
-    }
+    if catchingUp, wantsPlayback { hls?.setRate(2) }
     if let hls {
       let engine = hls.engine
+      if engine.playbackState == .finished, hls.error == nil {
+        streamEnded()
+        return
+      }
       playing = engine.isPlaying && engine.loadState == .playable
       playbackRate = playing ? engine.playbackRate : 0
       buffering = wantsPlayback && engine.loadState != .playable
@@ -556,40 +561,24 @@ import SwiftUI
       hls?.engine.isReadyToPlay == true || player.currentItem?.status == .readyToPlay
     else { return }
     setAutomaticCatchUp(false)
-    previousWaitingPolicy = player.automaticallyWaitsToMinimizeStalling
     previousDefaultRate = hls?.engine.playbackRate ?? player.defaultRate
     catchingUp = true
     if let hls {
       hls.setRate(2)
       hls.play()
     } else {
-      player.automaticallyWaitsToMinimizeStalling = false
-      player.defaultRate = 2
-      player.playImmediately(atRate: 2)
+      player.play(atRate: 2)
     }
     updateTime()
-    if hls == nil {
-      // AVPlayer's periodic observer stops at an empty buffer; keep retrying a held rate.
-      catchUpTask = Task { [weak self] in
-        while !Task.isCancelled {
-          do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
-          guard let self, catchingUp, wantsPlayback else { return }
-          updateTime()
-        }
-      }
-    }
   }
 
   func endCatchUp() {
     guard catchingUp else { return }
     catchingUp = false
-    catchUpTask?.cancel()
-    catchUpTask = nil
     if let hls {
       hls.setRate(previousDefaultRate)
     } else {
       player.defaultRate = previousDefaultRate
-      player.automaticallyWaitsToMinimizeStalling = previousWaitingPolicy
       if wantsPlayback, player.currentItem?.status == .readyToPlay { player.play() }
     }
     updateTime()
@@ -662,7 +651,7 @@ struct PlayerView: View {
   let source: StreamSource
   var blocked: String? = nil
   let doubleTapEnabled: Bool
-  @State private var playback = NativePlayback()
+  let playback: NativePlayback
   let controls: PlaybackControls
   let library: StreamLibrary
   let addStream: () -> Void
@@ -691,13 +680,14 @@ struct PlayerView: View {
         playback.catchingUp || (playback.automaticallyCatchingUp && controls.visible) {
         Text(speedLabel).font(.headline.monospacedDigit()).padding(10)
           .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white)
+          .offset(y: playback.catchingUp ? 0 : 56)
           .accessibilityLabel("Playback speed: " + speedLabel).allowsHitTesting(false)
       }
       if playback.loading || playback.buffering {
         ProgressView().tint(.white).allowsHitTesting(false)
       }
       if playback.waitingForAds {
-        Text("Waiting for an ad-free stream").font(.caption2)
+        Text("Blocking ads").font(.caption2)
           .padding(.horizontal, 8).padding(.vertical, 4)
           .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white).allowsHitTesting(false)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -736,7 +726,7 @@ struct PlayerView: View {
     .onDisappear {
       playback.endCatchUp()
       controls.cancel()
-      if !playback.pipActive { playback.stop() }
+      if scenePhase == .active, !playback.pipActive { playback.stop() }
     }
   }
 
@@ -752,28 +742,27 @@ struct PlayerView: View {
   private var playerControls: some View {
     ZStack {
       Color.black.opacity(0.2).allowsHitTesting(false)
-      VStack {
-        HStack {
-          StreamMenu(library: library, controls: controls, addStream: addStream)
-            .frame(width: 44, height: 44)
-          Spacer()
-          if showDGGViewers, let count = library.dggViewerCount(for: source) {
-            Label("DGG " + count.formatted(), systemImage: "person.2")
-              .font(.caption.monospacedDigit())
-              .accessibilityLabel("\(count) watching through Destiny.gg")
-          }
-          if showViewers, let count = library.viewerCount(for: source) {
-            Label(count.formatted(), systemImage: "eye")
-              .font(.caption.monospacedDigit())
-              .accessibilityLabel("\(count) overall stream viewers")
-          }
-          Button {
-            controls.settingsPresented = true
-          } label: {
-            Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
-          }.accessibilityLabel("Playback settings")
+      HStack {
+        StreamMenu(library: library, controls: controls, addStream: addStream)
+          .frame(width: 44, height: 44)
+        Spacer()
+        if showDGGViewers, let count = library.dggViewerCount(for: source) {
+          Label("DGG " + count.formatted(), systemImage: "person.2")
+            .font(.caption.monospacedDigit())
+            .accessibilityLabel("\(count) watching through Destiny.gg")
         }
-        Spacer(minLength: 4)
+        if showViewers, let count = library.viewerCount(for: source) {
+          Label(count.formatted(), systemImage: "eye")
+            .font(.caption.monospacedDigit())
+            .accessibilityLabel("\(count) overall stream viewers")
+        }
+        Button {
+          controls.settingsPresented = true
+        } label: {
+          Image(systemName: "slider.horizontal.3").frame(width: 44, height: 44)
+        }.accessibilityLabel("Playback settings")
+      }.padding(8).frame(maxHeight: .infinity, alignment: .top)
+      if blocked == nil, playback.error == nil {
         Button {
           playback.toggle()
           controls.show()
@@ -781,9 +770,9 @@ struct PlayerView: View {
           Image(systemName: playback.playing || playback.buffering ? "pause.fill" : "play.fill")
             .font(.title).frame(width: 52, height: 52)
         }.accessibilityLabel(playback.playing || playback.buffering ? "Pause" : "Play")
-        Spacer(minLength: 4)
-      }.padding(8).foregroundStyle(.white).tint(.white)
-    }
+          .opacity(playback.catchingUp ? 0 : 1).allowsHitTesting(!playback.catchingUp)
+      }
+    }.foregroundStyle(.white).tint(.white)
   }
 }
 
@@ -869,24 +858,24 @@ private struct NativeVideoLayer: UIViewRepresentable {
   let hold: (Bool) -> Void
   let doubleTapEnabled: Bool
   let toggleChat: () -> Void
+  func makeCoordinator() -> NativePlayback { playback }
   func makeUIView(context: Context) -> VideoSurface {
     let view = VideoSurface()
-    view.layerPlayer.player = playback.hls == nil ? playback.player : nil
     view.layerPlayer.videoGravity = .resizeAspect
     view.isAccessibilityElement = true
     view.accessibilityLabel = "Video"
     view.accessibilityIdentifier = "video"
     view.accessibilityTraits = .button
-    playback.attach(view.layerPlayer)
     configure(view)
     return view
   }
   func updateUIView(_ view: VideoSurface, context: Context) {
-    view.layerPlayer.player = playback.hls == nil ? playback.player : nil
-    playback.attach(view.layerPlayer)
     configure(view)
   }
   private func configure(_ view: VideoSurface) {
+    let player = playback.hls == nil ? playback.player : nil
+    if view.layerPlayer.player !== player { view.layerPlayer.player = player }
+    playback.attach(view.layerPlayer)
     view.setRenderingView(playback.hls?.engine.view)
     view.tap = tap
     view.hold = hold
@@ -904,10 +893,11 @@ private struct NativeVideoLayer: UIViewRepresentable {
         }
       ] : []
   }
-  static func dismantleUIView(_ view: VideoSurface, coordinator: ()) {
+  static func dismantleUIView(_ view: VideoSurface, coordinator: NativePlayback) {
     view.cancelHold()
     view.hold = nil
     view.tap = nil
+    guard !coordinator.pipActive, UIApplication.shared.applicationState == .active else { return }
     view.layerPlayer.player = nil
     view.setRenderingView(nil)
   }

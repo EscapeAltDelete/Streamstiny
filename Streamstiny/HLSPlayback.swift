@@ -144,7 +144,17 @@ private final class HLSOptions: KSOptions {
     return tracks.enumerated().filter { _, track in
       guard let format = track.formatDescription else { return false }
       let size = CMVideoFormatDescriptionGetDimensions(format)
-      return Int(size.width) <= variant.width && Int(size.height) <= variant.height
-    }.max { $0.element.bitRate < $1.element.bitRate }?.offset
+      return variant.isSource || (Int(size.width) <= variant.width && Int(size.height) <= variant.height)
+    }.max {
+      let left = CMVideoFormatDescriptionGetDimensions($0.element.formatDescription!)
+      let right = CMVideoFormatDescriptionGetDimensions($1.element.formatDescription!)
+      let leftPixels = Int64(left.width) * Int64(left.height)
+      let rightPixels = Int64(right.width) * Int64(right.height)
+      if leftPixels != rightPixels { return leftPixels < rightPixels }
+      if $0.element.nominalFrameRate != $1.element.nominalFrameRate {
+        return $0.element.nominalFrameRate < $1.element.nominalFrameRate
+      }
+      return $0.element.bitRate < $1.element.bitRate
+    }?.offset
   }
 }

@@ -8,13 +8,17 @@ struct HLSVariant: Identifiable, Equatable, Sendable {
   let frameRate: Double
   let externalMedia: Bool
   var codecs: String = ""
+  var isSource: Bool { width == 0 && height == 0 }
+  var isPortrait: Bool { height > width }
   var id: String { "\(width)x\(height):\(Int(frameRate.rounded())):\(externalMedia):\(codecs)" }
   var label: String {
     guard height > 0 else { return "Source" }
     let codec = codecs.lowercased()
     let suffix = codec.contains("hvc") || codec.contains("hev") || codec.contains("h265") ? " · HEVC" : ""
-    return "\(height)p" + (frameRate > 30 ? " · \(Int(frameRate.rounded())) fps" : "") + suffix
+    return "\(min(width, height))p" + (isPortrait ? " · Portrait" : "")
+      + (frameRate > 30 ? " · \(Int(frameRate.rounded())) fps" : "") + suffix
   }
+  func playbackURL(master: URL) -> URL { externalMedia ? master : url }
 }
 
 enum HLSPlaylist {
@@ -74,7 +78,12 @@ enum HLSPlaylist {
       if seen.insert(variant.id).inserted { result.append(variant) }
     }
     return result.sorted {
-      $0.height == $1.height ? $0.bandwidth > $1.bandwidth : $0.height > $1.height
+      if $0.isSource != $1.isSource { return $0.isSource }
+      let leftPixels = $0.width * $0.height, rightPixels = $1.width * $1.height
+      if leftPixels != rightPixels { return leftPixels > rightPixels }
+      if $0.isPortrait != $1.isPortrait { return !$0.isPortrait }
+      if $0.frameRate != $1.frameRate { return $0.frameRate > $1.frameRate }
+      return $0.bandwidth > $1.bandwidth
     }
   }
 }

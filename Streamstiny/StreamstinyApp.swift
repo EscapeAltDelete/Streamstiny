@@ -22,6 +22,7 @@ struct ContentView: View {
   @State private var settings = false
   @State private var sources = false
   @State private var controls = PlaybackControls()
+  @State private var playback = NativePlayback()
   @State private var showChat = false
   @State private var sending = false
   @State private var mounted = false
@@ -54,7 +55,7 @@ struct ContentView: View {
         }
         PlayerView(
           source: library.selected, blocked: library.banned[library.selected.id],
-          doubleTapEnabled: landscape, controls: controls, library: library,
+          doubleTapEnabled: landscape, playback: playback, controls: controls, library: library,
           addStream: { sources = true }
         ) { showChat.toggle() }
         .frame(
