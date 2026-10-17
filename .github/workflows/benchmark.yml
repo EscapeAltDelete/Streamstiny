@@ -7,6 +7,10 @@ on:
         type: choice
         options: [baseline, optimized]
         default: baseline
+      compare_ref:
+        description: Optional immutable baseline commit for a paired same-runner comparison
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -19,6 +23,7 @@ jobs:
     timeout-minutes: 30
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      GIT_NO_LAZY_FETCH: 1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -31,8 +36,10 @@ jobs:
         id: packages
         with:
           path: build/SourcePackages
-          key: swiftpackages-ios-arm64-v1-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/compact_packages.py') }}
-          restore-keys: swiftpackages-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+          key: swiftpackages-ios-arm64-v2-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-${{ hashFiles('scripts/compact_packages.py') }}
+          restore-keys: |
+            swiftpackages-ios-arm64-v2-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-
+            swiftpackages-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
       - name: Prepare pinned project and dependencies
         run: |
           archive="$HOME/Library/Caches/Streamstiny/xcodegen.zip"
@@ -58,6 +65,19 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_*.py'
           xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{ChatModels,ChatProtocol,HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
           "$RUNNER_TEMP/playback-tests"
+      - name: Measure baseline on this runner
+        if: inputs.compare_ref != ''
+        env:
+          COMPARE_REF: ${{ inputs.compare_ref }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$COMPARE_REF"
+          git diff --exit-code "$COMPARE_REF" HEAD -- Streamstiny dependencies.yml
+          git show "$COMPARE_REF:project.yml" > project.yml
+          git show "$COMPARE_REF:scripts/build_input_times.py" > scripts/build_input_times.py
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
+          python3 scripts/benchmark_build.py --label baseline
+          git restore --source=HEAD -- project.yml scripts/build_input_times.py
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
       - name: Measure clean, warm, source edit, and fresh checkout
         env:
           LABEL: ${{ inputs.label }}

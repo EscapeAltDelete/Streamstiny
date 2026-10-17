@@ -66,6 +66,7 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
       # Bump when changing the runner, SDK, toolchain, or cache layout.
       BUILD_CACHE_VERSION: v2-arm64-macos15-xcode16.4
+      GIT_NO_LAZY_FETCH: 1
     steps:
       - name: Select app version
         id: version
@@ -105,8 +106,10 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/SourcePackages
-          key: swiftpackages-ios-arm64-v1-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/compact_packages.py') }}
-          restore-keys: swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+          key: swiftpackages-ios-arm64-v2-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-${{ hashFiles('scripts/compact_packages.py') }}
+          restore-keys: |
+            swiftpackages-ios-arm64-v2-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}-
+            swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
       - name: Restore compiled release products
         id: release
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9

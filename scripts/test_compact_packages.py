@@ -49,6 +49,7 @@ class CompactPackagesTests(unittest.TestCase):
     def test_pinned_bytes_git_integrity_clean_status_and_repeatability(self):
         binary = self.checkout / "Sources/Example.xcframework/ios-arm64/binary"
         original = binary.read_bytes()
+        unused = git(self.checkout, "rev-parse", "HEAD:Sources/Example.xcframework/macos-arm64_x86_64/binary")
         lock = (self.cache / "Package.resolved").read_bytes()
         compact(self.cache)
         self.assertEqual(binary.read_bytes(), original)
@@ -60,6 +61,9 @@ class CompactPackagesTests(unittest.TestCase):
         self.assertEqual((self.cache / "Package.resolved").read_bytes(), lock)
         git(self.checkout, "fsck", "--full")
         git(self.repository, "fsck", "--full")
+        self.assertIn("?" + unused, git(self.repository, "rev-list", "--objects", "--missing=print", "HEAD"))
+        alternates = self.checkout / ".git/objects/info/alternates"
+        self.assertEqual(alternates.read_text().strip(), str(self.repository / "objects"))
         before = binary.stat().st_mtime_ns
         compact(self.cache)
         self.assertEqual(binary.stat().st_mtime_ns, before)
