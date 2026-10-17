@@ -165,8 +165,7 @@ enum ChatProtocol {
     guard !trimmed.isEmpty, trimmed.count <= 500 else { throw ChatInputError.invalidLength }
     var payload = ["data": trimmed]
     if let recipient, !recipient.isEmpty { payload["nick"] = recipient }
-    let data = try JSONSerialization.data(withJSONObject: payload, options: .sortedKeys)
-    return "\(recipient == nil ? "MSG" : "PRIVMSG") \(String(decoding: data, as: UTF8.self))"
+    return try frame(recipient == nil ? "MSG" : "PRIVMSG", payload)
   }
 }
 

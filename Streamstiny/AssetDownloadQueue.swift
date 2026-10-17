@@ -6,7 +6,6 @@ struct AssetDownloadQueue<Key: Hashable> {
   private(set) var active: Set<Key> = []
   private var pending: [Key] = []
   private var queued: Set<Key> = []
-  var pendingCount: Int { pending.count }
   init(limit: Int = 4) { self.limit = max(1, limit) }
   mutating func enqueue(_ key: Key) -> [Key] {
     guard !active.contains(key), queued.insert(key).inserted else { return [] }

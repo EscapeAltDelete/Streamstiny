@@ -32,11 +32,12 @@ extension ChatStore {
     case "connect": await restart()
     case "embed", "e": requestedSource = try StreamSource.parse(target)
     case "postembed", "pe":
-      let source = (try? StreamSource.parse(target)) ?? selectedSource
+      let parsed = try? StreamSource.parse(target)
+      let source = parsed ?? selectedSource
       guard let source, source.provider != .direct else {
         throw ChatInputError.invalidCommand("Select a stream or provide its URL.")
       }
-      let note = (try? StreamSource.parse(target)) == nil ? text : args.dropFirst().joined(separator: " ")
+      let note = parsed == nil ? text : args.dropFirst().joined(separator: " ")
       return await send("#\(source.provider.platform)/\(source.key) " + note)
     case "host", "unhost":
       guard account?.moderator == true || account?.roles.contains("HOST") == true else {

@@ -48,6 +48,7 @@ import Foundation
     precondition(ranked[1].playbackURL(master: base) == ranked[1].url)
     let external = HLSVariant(url: ranked[1].url, width: 3840, height: 2160, bandwidth: 9000000, frameRate: 60, externalMedia: true)
     precondition(external.playbackURL(master: base) == base, "Keep alternate audio on its master")
+    try ChatEncodingTests.run()
     TwitchPlaybackTests.run()
     try await PlaybackResolverTests.run()
     try await NativePlayerTests.run()
