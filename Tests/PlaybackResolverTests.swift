@@ -33,12 +33,13 @@ private final class PlaybackProtocol: URLProtocol, @unchecked Sendable {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
   override func startLoading() {
     let url = request.url!
-    let key = url.host! + url.path
+    let key = url.host! + URLComponents(url: url, resolvingAgainstBaseURL: false)!.path
     Self.lock.lock()
     Self.requests += 1
     let client = request.value(forHTTPHeaderField: "X-YouTube-Client-Name") ?? ""
-    let (status, body) = Self.replies[key + ":" + client] ?? Self.replies[key] ?? (500, "Unexpected request")
+    let reply = Self.replies[key + ":" + client] ?? Self.replies[key]
     Self.lock.unlock()
+    guard let (status, body) = reply else { fatalError("Unexpected fixture request: \(key)") }
     let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
     self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
     self.client?.urlProtocol(self, didLoad: Data(body.utf8))
@@ -61,6 +62,7 @@ enum PlaybackResolverTests {
     PlaybackProtocol.prepare([:])
     let none = try await resolver.variants(at: URL(string: "https://video.example/no-playlist")!)
     precondition(none.isEmpty && PlaybackProtocol.count == 0)
+    PlaybackProtocol.prepare(["video.example/master.m3u8": (500, "")])
     do {
       _ = try await resolver.variants(at: url)
       preconditionFailure("Failed playlist fetches must remain retryable errors")
@@ -120,6 +122,7 @@ enum PlaybackResolverTests {
     precondition(fallback.variants?.count == 1, "One failed client must not hide the other client's media")
 
     // Cancellation may finish URLProtocol callbacks after the task returns; test it last.
+    PlaybackProtocol.prepare(["video.example/master.m3u8": (200, master)])
     let cancelled = Task { try await resolver.variants(at: url) }
     cancelled.cancel()
     do {
