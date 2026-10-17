@@ -1,0 +1,69 @@
+name: Benchmark Release builds
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Measurement label (does not change compiler settings)
+        type: choice
+        options: [baseline, optimized]
+        default: baseline
+permissions:
+  contents: read
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  benchmark:
+    if: github.repository == 'EscapeAltDelete/Streamstiny' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/Streamstiny/xcodegen.zip
+          key: xcodegen-macos-2.44.1-a2e905fb68446e9b
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        id: packages
+        with:
+          path: build/SourcePackages
+          key: swiftpackages-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+      - name: Prepare pinned project and dependencies
+        run: |
+          archive="$HOME/Library/Caches/Streamstiny/xcodegen.zip"
+          mkdir -p "$(dirname "$archive")"
+          if [ ! -f "$archive" ]; then
+            curl --fail --location --retry 3 https://github.com/yonaskolb/XcodeGen/releases/download/2.44.1/xcodegen.zip -o "$archive"
+          fi
+          echo 'a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  '"$archive" | shasum -a 256 -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
+          resolved=Streamstiny.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          if [ -f build/SourcePackages/Package.resolved ]; then
+            mkdir -p "$(dirname "$resolved")"
+            cp build/SourcePackages/Package.resolved "$resolved"
+          else
+            xcodebuild -resolvePackageDependencies -project Streamstiny.xcodeproj -scheme Streamstiny -clonedSourcePackagesDirPath build/SourcePackages -skipPackageUpdates
+            cp "$resolved" build/SourcePackages/Package.resolved
+          fi
+          python3 scripts/patch_playback.py
+      - name: Run existing tests
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{ChatModels,ChatProtocol,HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
+          "$RUNNER_TEMP/playback-tests"
+      - name: Measure clean, warm, source edit, and fresh checkout
+        env:
+          LABEL: ${{ inputs.label }}
+        run: python3 scripts/benchmark_build.py --label "$LABEL"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: build-benchmark-${{ inputs.label }}
+          path: build/benchmarks
+          if-no-files-found: warn
+          retention-days: 7
