@@ -119,8 +119,8 @@ jobs:
             build/device/ModuleCache.noindex
             build/device/SDKStatCaches.noindex
             build/device/ci-inputs.json
-          key: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-${{ hashFiles('project.yml', 'Streamstiny/**') }}
-          restore-keys: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-
+          key: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py', 'scripts/compact_packages.py') }}-${{ hashFiles('project.yml', 'Streamstiny/**') }}
+          restore-keys: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py', 'scripts/compact_packages.py') }}-
       - name: Build optimized ARM64 Release
         run: |
           RESOLVED="Streamstiny.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
