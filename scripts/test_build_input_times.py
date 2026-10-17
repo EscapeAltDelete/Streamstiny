@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -68,6 +69,46 @@ class BuildInputTimesTests(unittest.TestCase):
         fresh = project.stat().st_mtime_ns
         times.restore(self.root)
         self.assertEqual(project.stat().st_mtime_ns, fresh)
+
+    def test_asset_catalog_directories_restore_when_contents_match(self):
+        image = self.write("Streamstiny/Assets.xcassets/AppIcon.appiconset/Icon.png", "image")
+        catalog, icon = image.parent.parent, image.parent
+        for path in (catalog, icon):
+            os.utime(path, ns=(1_000_000_000, 1_000_000_000))
+        times.save(self.root)
+        for path in (image, catalog, icon):
+            os.utime(path, ns=(2_000_000_000, 2_000_000_000))
+        times.restore(self.root)
+        for path in (image, catalog, icon):
+            self.assertEqual(path.stat().st_mtime_ns, 1_000_000_000)
+
+    def test_asset_changes_additions_deletions_and_renames_keep_fresh_catalog(self):
+        for change in ("content", "add", "delete", "rename", "directory"):
+            with self.subTest(change=change):
+                image = self.write("Streamstiny/Assets.xcassets/AppIcon.appiconset/Icon.png", "image")
+                catalog = image.parent.parent
+                os.utime(catalog, ns=(1_000_000_000, 1_000_000_000))
+                times.save(self.root)
+                if change == "content": image.write_text("new image")
+                elif change == "add": self.write(str(image.parent.relative_to(self.root) / "New.png"), "new")
+                elif change == "delete": image.unlink()
+                elif change == "directory": (image.parent / "New.imageset").mkdir()
+                else: image.rename(image.with_name("Renamed.png"))
+                os.utime(catalog, ns=(2_000_000_000, 2_000_000_000))
+                times.restore(self.root)
+                self.assertEqual(catalog.stat().st_mtime_ns, 2_000_000_000)
+                shutil.rmtree(catalog)
+
+    def test_asset_catalog_with_external_symlink_is_not_restored(self):
+        external = self.write("other/image.png", "outside")
+        catalog = self.root / "Streamstiny/Assets.xcassets"
+        catalog.mkdir(parents=True)
+        (catalog / "image.png").symlink_to(external)
+        times.save(self.root)
+        os.utime(catalog, ns=(2_000_000_000, 2_000_000_000))
+        times.restore(self.root)
+        self.assertEqual(catalog.stat().st_mtime_ns, 2_000_000_000)
+        self.assertEqual(external.stat().st_mtime_ns, 1_000_000_000)
 
 
 if __name__ == "__main__":

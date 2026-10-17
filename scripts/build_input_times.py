@@ -19,20 +19,31 @@ def inputs(root):
     for directory in ("Streamstiny", "Streamstiny.xcodeproj"):
         for path in sorted((root / directory).rglob("*")):
             # Never change targets outside the checkout, including symlinked parents.
-            if path.is_file() and path.resolve() == path.absolute():
+            if path.resolve() != path.absolute():
+                continue
+            asset_directory = path.is_dir() and any(
+                parent.suffix == ".xcassets" for parent in (path, *path.parents))
+            if path.is_file() or asset_directory:
                 yield path
 
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    if path.is_file():
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    children = sorted(path.rglob("*"))
+    if any(child.resolve() != child.absolute() for child in children):
+        return None
+    contents = [(child.relative_to(path).as_posix(), "directory" if child.is_dir() else digest(child))
+                for child in children]
+    return hashlib.sha256(json.dumps(contents).encode()).hexdigest()
 
 
 def save(root):
     records = {
         path.relative_to(root).as_posix(): {
-            "sha256": digest(path), "mtime_ns": path.stat().st_mtime_ns
+            "sha256": checksum, "mtime_ns": path.stat().st_mtime_ns
         }
-        for path in inputs(root)
+        for path in inputs(root) if (checksum := digest(path)) is not None
     }
     state = root / STATE
     state.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +73,8 @@ def restore(root):
         mtime = record.get("mtime_ns")
         if type(mtime) is not int or not 0 <= mtime <= 2**63 - 1:
             continue
-        if record.get("sha256") == digest(path):
+        checksum = digest(path)
+        if checksum is not None and record.get("sha256") == checksum:
             os.utime(path, ns=(path.stat().st_atime_ns, mtime))
             restored += 1
     print(f"Restored timestamps for {restored} unchanged build inputs")

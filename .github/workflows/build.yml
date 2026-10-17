@@ -6,6 +6,7 @@ on:
       - 'Streamstiny/**'
       - 'Tests/**'
       - 'scripts/build_input_times.py'
+      - 'scripts/compact_packages.py'
       - 'scripts/patch_playback.py'
       - 'scripts/package.sh'
       - 'scripts/validate_ipa.py'
@@ -21,6 +22,7 @@ on:
       - 'Streamstiny/**'
       - 'Tests/**'
       - 'scripts/build_input_times.py'
+      - 'scripts/compact_packages.py'
       - 'scripts/patch_playback.py'
       - 'scripts/package.sh'
       - 'scripts/validate_ipa.py'
@@ -36,7 +38,22 @@ concurrency:
   # Serialize main builds through publication so two builds cannot select one version.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
-  build:
+  tests:
+    if: github.repository == 'EscapeAltDelete/Streamstiny'
+    runs-on: macos-15
+    timeout-minutes: 5
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Check playback and build tooling
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{ChatModels,ChatProtocol,HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
+          "$RUNNER_TEMP/playback-tests"
+  compile:
     if: >-
       ${{ github.repository == 'EscapeAltDelete/Streamstiny' &&
           (github.ref == 'refs/heads/main' || github.event_name == 'pull_request' ||
@@ -67,26 +84,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Check playback handling
-        run: |
-          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{ChatModels,ChatProtocol,HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
-          "$RUNNER_TEMP/playback-tests"
-      # All branches restore; only successful main builds save shared caches.
-      - name: Restore validated package for these build inputs
-        id: package
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: build/Streamstiny.tipa
-          key: tipa-${{ env.BUILD_CACHE_VERSION }}-${{ steps.version.outputs.version }}-${{ hashFiles('Streamstiny/**', 'scripts/build_input_times.py', 'scripts/patch_playback.py', 'scripts/package.sh', 'scripts/validate_ipa.py', 'scripts/Streamstiny.entitlements', 'project.yml', 'dependencies.yml', '.github/workflows/build.yml', '.gitattributes') }}
       - name: Restore verified XcodeGen archive
         id: xcodegen
-        if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/Library/Caches/Streamstiny/xcodegen.zip
           key: xcodegen-macos-2.44.1-a2e905fb68446e9b
       - name: Generate Xcode project
-        if: steps.package.outputs.cache-hit != 'true'
         run: |
           ARCHIVE="$HOME/Library/Caches/Streamstiny/xcodegen.zip"
           mkdir -p "$(dirname "$ARCHIVE")"
@@ -98,14 +102,13 @@ jobs:
           "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate
       - name: Restore pinned native playback packages
         id: packages
-        if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/SourcePackages
-          key: swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+          key: swiftpackages-ios-arm64-v1-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/compact_packages.py') }}
+          restore-keys: swiftpackages-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
       - name: Restore compiled release products
         id: release
-        if: steps.package.outputs.cache-hit != 'true'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -116,26 +119,22 @@ jobs:
           key: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-${{ hashFiles('project.yml', 'Streamstiny/**') }}
           restore-keys: release-${{ env.BUILD_CACHE_VERSION }}-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/build_input_times.py') }}-
       - name: Build optimized ARM64 Release
-        if: steps.package.outputs.cache-hit != 'true'
         run: |
           RESOLVED="Streamstiny.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-          if [ "${{ steps.packages.outputs.cache-hit }}" = "true" ] && [ -f build/SourcePackages/Package.resolved ]; then
+          if [ -f build/SourcePackages/Package.resolved ]; then
             mkdir -p "$(dirname "$RESOLVED")"
             cp build/SourcePackages/Package.resolved "$RESOLVED"
           else
             xcodebuild -resolvePackageDependencies -project Streamstiny.xcodeproj -scheme Streamstiny -clonedSourcePackagesDirPath build/SourcePackages -skipPackageUpdates
             cp "$RESOLVED" build/SourcePackages/Package.resolved
           fi
+          python3 scripts/compact_packages.py
           python3 scripts/patch_playback.py
           python3 scripts/build_input_times.py restore
           xcodebuild build -project Streamstiny.xcodeproj -scheme Streamstiny -configuration Release -destination 'generic/platform=iOS' -clonedSourcePackagesDirPath build/SourcePackages -disableAutomaticPackageResolution -skipPackageUpdates -derivedDataPath build/device -jobs "$(sysctl -n hw.logicalcpu)" -parallelizeTargets -showBuildTimingSummary ARCHS=arm64 CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO MARKETING_VERSION="$APP_VERSION" CURRENT_PROJECT_VERSION="$APP_BUILD"
           python3 scripts/build_input_times.py save
       - name: Package and validate TrollStore IPA
-        if: steps.package.outputs.cache-hit != 'true'
         run: bash scripts/package.sh
-      - name: Validate cached package
-        if: steps.package.outputs.cache-hit == 'true'
-        run: python3 scripts/validate_ipa.py build/Streamstiny.tipa "$APP_VERSION"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: Streamstiny-TIPA
@@ -143,26 +142,20 @@ jobs:
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
-      - name: Save validated package
-        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: build/Streamstiny.tipa
-          key: ${{ steps.package.outputs.cache-primary-key }}
       - name: Save verified XcodeGen archive
-        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.xcodegen.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.xcodegen.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/Library/Caches/Streamstiny/xcodegen.zip
           key: ${{ steps.xcodegen.outputs.cache-primary-key }}
       - name: Save pinned native playback packages
-        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.packages.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.packages.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: build/SourcePackages
           key: ${{ steps.packages.outputs.cache-primary-key }}
       - name: Save compiled release products
-        if: github.ref == 'refs/heads/main' && steps.package.outputs.cache-hit != 'true' && steps.release.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && steps.release.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
@@ -171,6 +164,20 @@ jobs:
             build/device/SDKStatCaches.noindex
             build/device/ci-inputs.json
           key: ${{ steps.release.outputs.cache-primary-key }}
+  # Preserve the existing required "build" check while tests run alongside compilation.
+  build:
+    needs: [compile, tests]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      version: ${{ needs.compile.outputs.version }}
+    steps:
+      - name: Require compilation and tests
+        env:
+          COMPILE_RESULT: ${{ needs.compile.result }}
+          TEST_RESULT: ${{ needs.tests.result }}
+        run: test "$COMPILE_RESULT" = success && test "$TEST_RESULT" = success
   release:
     needs: build
     if: github.ref == 'refs/heads/main'

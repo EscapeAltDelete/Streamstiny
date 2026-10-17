@@ -31,7 +31,8 @@ jobs:
         id: packages
         with:
           path: build/SourcePackages
-          key: swiftpackages-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
+          key: swiftpackages-ios-arm64-v1-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py', 'scripts/compact_packages.py') }}
+          restore-keys: swiftpackages-v2-arm64-macos15-xcode16.4-${{ hashFiles('dependencies.yml', 'scripts/patch_playback.py') }}
       - name: Prepare pinned project and dependencies
         run: |
           archive="$HOME/Library/Caches/Streamstiny/xcodegen.zip"
@@ -50,6 +51,7 @@ jobs:
             xcodebuild -resolvePackageDependencies -project Streamstiny.xcodeproj -scheme Streamstiny -clonedSourcePackagesDirPath build/SourcePackages -skipPackageUpdates
             cp "$resolved" build/SourcePackages/Package.resolved
           fi
+          python3 scripts/compact_packages.py
           python3 scripts/patch_playback.py
       - name: Run existing tests
         run: |
@@ -60,6 +62,12 @@ jobs:
         env:
           LABEL: ${{ inputs.label }}
         run: python3 scripts/benchmark_build.py --label "$LABEL"
+      - name: Save validated compact dependency cache
+        if: steps.packages.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: build/SourcePackages
+          key: ${{ steps.packages.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

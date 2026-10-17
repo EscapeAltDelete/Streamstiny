@@ -79,7 +79,7 @@ def main():
     subprocess.run(["python3", "scripts/build_input_times.py", "save"], check=True)
     subprocess.run(["bash", "scripts/package.sh"], check=True)
     subprocess.run(["du", "-sk", "build/SourcePackages", "build/device"], check=True)
-    frameworks = sorted(Path("build/SourcePackages/artifacts").rglob("*.xcframework"))
+    frameworks = sorted(Path("build/SourcePackages/checkouts").rglob("*.xcframework"))
     sizes = []
     for framework in frameworks:
         for path in sorted(framework.iterdir()):
