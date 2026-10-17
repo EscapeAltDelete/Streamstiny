@@ -264,11 +264,15 @@ import SwiftUI
           "AVURLAssetHTTPHeaderFieldsKey": headers]))
     // Keep the master for alternate media groups and YouTube bitrate adaptation.
     if let variant, variant.externalMedia || adaptive {
-      item.preferredMaximumResolution = CGSize(
-        width: CGFloat(variant.width), height: CGFloat(variant.height))
-      item.preferredPeakBitRate = variant.bandwidth
+      limitQuality(of: item, to: variant)
     }
     return item
+  }
+
+  private static func limitQuality(of item: AVPlayerItem, to variant: HLSVariant?) {
+    item.preferredMaximumResolution = CGSize(
+      width: CGFloat(variant?.width ?? 0), height: CGFloat(variant?.height ?? 0))
+    item.preferredPeakBitRate = variant?.bandwidth ?? 0
   }
 
   static func playbackURL(master: URL, variant: HLSVariant?, edgeURL: URL?) -> URL {
@@ -364,6 +368,11 @@ import SwiftUI
     guard id != qualityID || requestedEdge != edge else { return }
     let variant = variants.first { $0.id == id }
     guard id == nil || variant != nil else { return }
+    if source?.provider == .youtube, let item = player.currentItem {
+      Self.limitQuality(of: item, to: variant)
+      qualityID = id
+      return
+    }
     endCatchUp()
     setAutomaticCatchUp(false)
     selection?.cancel()
@@ -795,7 +804,8 @@ struct PlayerView: View {
         }, doubleTapEnabled: doubleTapEnabled, toggleChat: toggleChat
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      if playback.catchingUp || (playback.automaticallyCatchingUp && controls.visible) {
+      if playback.playbackRate > 1,
+        playback.catchingUp || (playback.automaticallyCatchingUp && controls.visible) {
         Text(speedLabel).font(.headline.monospacedDigit()).padding(10)
           .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white)
           .accessibilityLabel("Playback speed: " + speedLabel).allowsHitTesting(false)
@@ -804,8 +814,11 @@ struct PlayerView: View {
         ProgressView().tint(.white).allowsHitTesting(false)
       }
       if playback.waitingForAds {
-        Text("Waiting for an ad-free stream").font(.caption).padding(10)
+        Text("Waiting for an ad-free stream").font(.caption2)
+          .padding(.horizontal, 8).padding(.vertical, 4)
           .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white).allowsHitTesting(false)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .padding(.leading, 8).padding(.top, controls.visible ? 60 : 8)
       }
       if let message = blocked ?? playback.error {
         VStack(spacing: 12) {
@@ -850,9 +863,7 @@ struct PlayerView: View {
   }
 
   private var speedLabel: String {
-    playback.playbackRate > 0
-      ? playback.playbackRate.formatted(.number.precision(.fractionLength(0...1))) + "×"
-      : "Waiting for video"
+    playback.playbackRate.formatted(.number.precision(.fractionLength(0...1))) + "×"
   }
 
   private var playerControls: some View {

@@ -10,6 +10,8 @@ settings:
     TARGETED_DEVICE_FAMILY: '1,2'
     CODE_SIGNING_ALLOWED: NO
     SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: '0.0.1'
+    CURRENT_PROJECT_VERSION: '1'
   configs:
     Release:
       SWIFT_OPTIMIZATION_LEVEL: '-O'
@@ -32,8 +34,8 @@ targets:
       path: Streamstiny/Info.plist
       properties:
         CFBundleDisplayName: Streamstiny
-        CFBundleShortVersionString: '1.9.8'
-        CFBundleVersion: '28'
+        CFBundleShortVersionString: '$(MARKETING_VERSION)'
+        CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: YES
           NSExceptionDomains:

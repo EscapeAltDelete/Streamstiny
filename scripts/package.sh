@@ -17,4 +17,4 @@ cp -R "$app" "$stage/Payload/"
 output="$PWD/build/Streamstiny.tipa"
 rm -f "$output"
 (cd "$stage" && zip -q -r -1 "$output" Payload)
-python3 scripts/validate_ipa.py build/Streamstiny.tipa
+python3 scripts/validate_ipa.py build/Streamstiny.tipa "${APP_VERSION:-0.0.1}"

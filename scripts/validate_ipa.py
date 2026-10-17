@@ -5,7 +5,7 @@ import sys
 import zipfile
 
 
-def validate(path):
+def validate(path, version=None):
     with zipfile.ZipFile(path) as archive:
         assert archive.testzip() is None, "Corrupt ZIP entry"
         root = "Payload/Streamstiny.app/"
@@ -13,6 +13,9 @@ def validate(path):
         assert info["CFBundleIdentifier"] == "gg.streamstiny.app"
         assert info["CFBundleExecutable"] == "Streamstiny"
         assert info["MinimumOSVersion"] == "17.0"
+        if version:
+            assert info["CFBundleShortVersionString"] == version, "Incorrect app version"
+            assert info["CFBundleVersion"] == version.rsplit(".", 1)[1], "Incorrect build number"
         binary = archive.read(root + info["CFBundleExecutable"])
         magic, cpu = struct.unpack_from("<II", binary)
         assert magic == 0xFEEDFACF, "Expected 64-bit thin Mach-O"
@@ -45,4 +48,4 @@ def validate(path):
 
 
 if __name__ == "__main__":
-    validate(sys.argv[1])
+    validate(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
