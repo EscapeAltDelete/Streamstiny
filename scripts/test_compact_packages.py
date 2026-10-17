@@ -85,6 +85,8 @@ class CompactPackagesTests(unittest.TestCase):
         subprocess.run(["git", "clone", "--quiet", "--bare", str(self.source), str(repository)], check=True)
         subprocess.run(["git", "clone", "--quiet", "--shared", str(repository), str(checkout)], check=True)
         git(checkout, "checkout", "--detach", "--quiet", self.revision)
+        # Large histories use longer automatic abbreviations than compact clones.
+        git(checkout, "config", "core.abbrev", "12")
         lock = self.cache / "Package.resolved"
         data = json.loads(lock.read_text())
         data["pins"].append(dict(data["pins"][0], identity="ksplayer"))

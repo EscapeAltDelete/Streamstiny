@@ -19,7 +19,7 @@ def compact(root, identity="ffmpegkit"):
     revision = pin["state"]["revision"]
     assert git(checkout, "rev-parse", "HEAD") == revision, "Checkout must match Package.resolved"
     state = git(checkout, "status", "--porcelain")
-    difference = git(checkout, "diff", "--binary", "HEAD")
+    difference = git(checkout, "diff", "--binary", "--full-index", "HEAD")
     assert identity != "ffmpegkit" or not state, "Preserve dependency edits"
     gitdir = Path(git(checkout, "rev-parse", "--absolute-git-dir"))
     patterns = ["/*"]
@@ -98,7 +98,7 @@ def compact(root, identity="ffmpegkit"):
             target.rename(original)
             incoming.rename(target)
             assert git(checkout, "status", "--porcelain") == state
-            assert git(checkout, "diff", "--binary", "HEAD") == difference
+            assert git(checkout, "diff", "--binary", "--full-index", "HEAD") == difference
         except BaseException:
             if original.exists():
                 if target.exists(): shutil.rmtree(target)
