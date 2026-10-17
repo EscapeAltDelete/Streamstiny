@@ -3,6 +3,9 @@ import CoreVideo
 import Foundation
 
 enum NativePlayerTests {
+  @MainActor private final class EndProbe {
+    var received = false
+  }
   @MainActor static func run() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -59,8 +62,20 @@ enum NativePlayerTests {
       let measured = (player.currentTime().seconds - start) / (ProcessInfo.processInfo.systemUptime - clock)
       precondition(abs(measured - Double(rate)) < 0.3, "Media clock must advance at \(rate)×, got \(measured)")
     }
+    let probe = EndProbe()
+    let notification = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: player.currentItem, queue: .main) { _ in
+      Task { @MainActor in probe.received = true }
+    }
+    defer { NotificationCenter.default.removeObserver(notification) }
+    await player.seek(to: CMTime(seconds: 3.8, preferredTimescale: 600))
+    player.play(atRate: 1)
+    for _ in 0..<40 {
+      if probe.received { break }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    precondition(probe.received, "A clean stream ending must deliver the notification used by the end prompt")
     player.pause()
     player.replaceCurrentItem(with: nil)
-    print("Passed native quality routing, alternate audio, buffering policy, and measured 2×/1× media-clock regressions")
+    print("Passed native quality routing, alternate audio, buffering policy, EOF notification, and measured 2×/1× media-clock regressions")
   }
 }

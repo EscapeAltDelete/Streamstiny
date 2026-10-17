@@ -141,20 +141,15 @@ private final class HLSOptions: KSOptions {
 
   override func wantedVideo(tracks: [MediaPlayerTrack]) -> Int? {
     guard let variant, variant.externalMedia else { return nil }
-    return tracks.enumerated().filter { _, track in
-      guard let format = track.formatDescription else { return false }
+    return tracks.enumerated().compactMap { index, track -> (index: Int, pixels: Int64, fps: Float, bitRate: Int64)? in
+      guard let format = track.formatDescription else { return nil }
       let size = CMVideoFormatDescriptionGetDimensions(format)
-      return variant.isSource || (Int(size.width) <= variant.width && Int(size.height) <= variant.height)
+      guard variant.isSource || (Int(size.width) <= variant.width && Int(size.height) <= variant.height) else { return nil }
+      return (index, Int64(size.width) * Int64(size.height), track.nominalFrameRate, track.bitRate)
     }.max {
-      let left = CMVideoFormatDescriptionGetDimensions($0.element.formatDescription!)
-      let right = CMVideoFormatDescriptionGetDimensions($1.element.formatDescription!)
-      let leftPixels = Int64(left.width) * Int64(left.height)
-      let rightPixels = Int64(right.width) * Int64(right.height)
-      if leftPixels != rightPixels { return leftPixels < rightPixels }
-      if $0.element.nominalFrameRate != $1.element.nominalFrameRate {
-        return $0.element.nominalFrameRate < $1.element.nominalFrameRate
-      }
-      return $0.element.bitRate < $1.element.bitRate
-    }?.offset
+      if $0.pixels != $1.pixels { return $0.pixels < $1.pixels }
+      if $0.fps != $1.fps { return $0.fps < $1.fps }
+      return $0.bitRate < $1.bitRate
+    }?.index
   }
 }

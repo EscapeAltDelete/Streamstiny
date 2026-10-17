@@ -287,7 +287,7 @@ import SwiftUI
       hls.setRate(rate)
     } else {
       player.defaultRate = rate
-      if wantsPlayback, player.timeControlStatus == .playing { player.play() }
+      if wantsPlayback, player.currentItem?.status == .readyToPlay { player.play() }
     }
     if playing { playbackRate = rate }
   }
