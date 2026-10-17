@@ -1,0 +1,50 @@
+name: Benchmark Destiny chat
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chat:
+    if: github.repository == 'EscapeAltDelete/Streamstiny' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/Library/Caches/Streamstiny/xcodegen.zip
+          key: xcodegen-macos-2.44.1-a2e905fb68446e9b
+      - name: Generate isolated chat benchmark
+        run: |
+          archive="$HOME/Library/Caches/Streamstiny/xcodegen.zip"
+          mkdir -p "$(dirname "$archive")"
+          if [ ! -f "$archive" ]; then
+            curl --fail --location --retry 3 https://github.com/yonaskolb/XcodeGen/releases/download/2.44.1/xcodegen.zip -o "$archive"
+          fi
+          echo 'a2e905fb68446e9bb4008cdfe2e13e3f176d0cbcca828b71770f8e53fca91b73  '"$archive" | shasum -a 256 -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
+          python3 scripts/prepare_chat_benchmark.py
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
+      - name: Measure real chat and picker on iOS Simulator
+        run: |
+          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.5' -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
+      - name: Collect screenshots and measurements
+        if: always()
+        run: |
+          container=$(xcrun simctl get_app_container booted gg.streamstiny.chatbenchmark data 2>/dev/null || true)
+          mkdir -p build/chat-artifacts
+          if [ -n "$container" ]; then cp -R "$container/Documents/." build/chat-artifacts/; fi
+          ps -eo pid,ppid,rss,%cpu,command > build/chat-artifacts/processes.txt
+          cp build/chat-benchmark.log build/chat-artifacts/ 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: chat-benchmark
+          path: |
+            build/chat-artifacts
+            build/chat-results.xcresult
+          retention-days: 7
