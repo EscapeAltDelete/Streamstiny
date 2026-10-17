@@ -7,7 +7,7 @@ jobs:
   chat:
     if: github.repository == 'EscapeAltDelete/Streamstiny' && github.ref == 'refs/heads/main'
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -29,9 +29,16 @@ jobs:
           unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
           python3 scripts/prepare_chat_benchmark.py
           "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
+      - name: Prepare pinned iOS Simulator
+        run: |
+          xcodebuild -downloadPlatform iOS -buildVersion 18.5 -architectureVariant arm64
+          device=$(xcrun simctl create 'Chat benchmark' com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5)
+          echo "SIMULATOR_UDID=$device" >> "$GITHUB_ENV"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
       - name: Measure real chat and picker on iOS Simulator
         run: |
-          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.5' -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
+          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
       - name: Collect screenshots and measurements
         if: always()
         run: |
