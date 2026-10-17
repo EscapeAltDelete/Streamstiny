@@ -31,7 +31,7 @@ jobs:
           "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
       - name: Prepare pinned iOS Simulator
         run: |
-          xcodebuild -downloadPlatform iOS -buildVersion 18.5 -architectureVariant arm64
+          xcodebuild -downloadPlatform iOS -buildVersion 18.5
           device=$(xcrun simctl create 'Chat benchmark' com.apple.CoreSimulator.SimDeviceType.iPhone-16 com.apple.CoreSimulator.SimRuntime.iOS-18-5)
           echo "SIMULATOR_UDID=$device" >> "$GITHUB_ENV"
           xcrun simctl boot "$device"
