@@ -2,6 +2,7 @@ import XCTest
 import SwiftUI
 import QuartzCore
 import MachO
+import Observation
 @testable import ChatBenchmark
 
 @MainActor final class ChatBenchmarkTests: XCTestCase {
@@ -59,6 +60,7 @@ import MachO
     XCTAssertGreaterThan(emotes.catalog.count, 300, "Benchmark requires the real current catalog")
     let user = ChatUser(["nick": "Benchmark", "roles": ["PROTECTED"], "subscription": ["tier": 5], "patreonMember": true])
     var results: [String: Any] = ["catalog_count": emotes.catalog.count, "metadata_seconds": CACurrentMediaTime() - loadStart,
+      "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
       "note": "App RSS excludes any WebKit content/network subprocesses; frame intervals use CADisplayLink, not instrumented GPU presentations."]
     for phase in ["cold_picker", "warm_picker", "scroll_picker"] {
       let monitor = Frames(); monitor.start()
