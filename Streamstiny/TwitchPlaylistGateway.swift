@@ -177,8 +177,8 @@ actor TwitchPlaylistSession {
     do {
       let (text, base) = try await fetch(url)
       let resolved = absolute(text, base: base, localPlaylists: true)
-      guard let primary = TwitchAdPlaylist(resolved), primary.segments.count <= 1000,
-        let variant = variants.first(where: { $0.url == url }), !variant.externalMedia,
+      guard let variant = variants.first(where: { $0.url == url }), !variant.externalMedia,
+        let primary = TwitchAdPlaylist(resolved),
         !primary.segments.contains(where: { $0.encrypted }) else {
           if force, resolved.components(separatedBy: .newlines).contains(where: {
             TwitchAdPlaylist.adTag($0) || (!$0.hasPrefix("#") && $0.contains("/adsquared/"))
@@ -250,7 +250,7 @@ actor TwitchPlaylistSession {
     do {
       let (text, base) = try await fetch(candidate.url)
       guard let playlist = TwitchAdPlaylist(absolute(text, base: base, localPlaylists: false))?.cleanSuffix,
-        !playlist.hasAds, !playlist.segments.contains(where: { $0.encrypted }),
+        !playlist.segments.contains(where: { $0.encrypted }),
         playlist.segments.allSatisfy({ ($0.map != nil) == fragmented }) else { return nil }
       return playlist
     } catch { return nil }

@@ -1,7 +1,7 @@
 import Foundation
 
 @main struct YouTubePlayerResponseTests {
-  static func main() throws {
+  static func main() async throws {
     let cases: [(String, Bool?)] = [
       (#"{"videoDetails":{"videoId":"live","isLive":true}}"#, true),
       (#"{"videoDetails":{"videoId":"vod","isLive":false}}"#, false),
@@ -22,5 +22,7 @@ import Foundation
       precondition(response.liveStatus(in: master) == expected, "Master must not imply live")
     }
     print("Passed \(cases.count * 4) YouTube live/VOD metadata and playlist checks")
+    TwitchPlaybackTests.run()
+    try await PlaybackResolverTests.run()
   }
 }

@@ -58,8 +58,7 @@ actor PlaybackResolver {
   private let session: URLSession
   private lazy var youtube = YouTubeResolver(session: session)
   private lazy var twitch = TwitchResolver(session: session)
-  init() {
-    let config = URLSessionConfiguration.ephemeral
+  init(configuration config: URLSessionConfiguration = .ephemeral) {
     config.timeoutIntervalForRequest = 20
     config.httpAdditionalHeaders = ["User-Agent": Self.userAgent]
     config.httpMaximumConnectionsPerHost = 4
@@ -78,20 +77,19 @@ actor PlaybackResolver {
     return HLSPlaylist.variants(text, base: base)
   }
 
-  func requiresLiveDecoder(_ url: URL, source: StreamSource) async throws -> Bool {
-    if source.provider == .kick || source.provider == .angelthump { return true }
-    if source.provider == .kickVod { return false }
-    guard url.pathExtension.lowercased() == "m3u8" else { return false }
+  func inspectHLS(_ url: URL) async throws -> (live: Bool, variants: [HLSVariant]?) {
+    guard url.pathExtension.lowercased() == "m3u8" else { return (false, []) }
     do {
       let (text, base) = try await playlist(at: url)
-      if let live = HLSPlaylist.isLive(text) { return live }
-      guard let variant = HLSPlaylist.variants(text, base: base).last else { return true }
+      let variants = HLSPlaylist.variants(text, base: base)
+      if let live = HLSPlaylist.isLive(text) { return (live, variants) }
+      guard let variant = variants.last else { return (true, variants) }
       let (media, _) = try await playlist(at: variant.url)
-      return HLSPlaylist.isLive(media) ?? true
+      return (HLSPlaylist.isLive(media) ?? true, variants)
     } catch {
       try Task.checkCancellation()
       // A failed classification must not prevent the decoder from trying the source.
-      return true
+      return (true, nil)
     }
   }
 
@@ -145,12 +143,12 @@ actor PlaybackResolver {
     case .kick:
       let json = try await object("https://kick.com/api/v2/channels/\(source.key)")
       guard json["livestream"] is [String: Any] else { throw PlaybackFailure.offline }
-      return try media(json["playback_url"] as? String)
+      return try media(json["playback_url"] as? String, isLive: true)
     case .kickVod:
       let parts = source.key.split(separator: "/")
       guard parts.count == 2 else { throw SourceError.invalid }
       let json = try await object("https://www.destiny.gg/api/kick/vod/\(parts[0])/\(parts[1])")
-      return try media((json["data"] as? [String: Any])?["source"] as? String)
+      return try media((json["data"] as? [String: Any])?["source"] as? String, isLive: false)
     case .angelthump:
       let data = try await fetch("https://api.angelthump.com/v3/streams?username=\(source.key)")
       let streams = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
@@ -170,7 +168,7 @@ actor PlaybackResolver {
       url.queryItems = [URLQueryItem(name: "token", value: token)]
       guard let address = url.url else { throw SourceError.invalid }
       let ttl = grant["expiresIn"] as? Double
-      return PlaybackMedia(address, expires: ttl.map { Date().addingTimeInterval($0) })
+      return PlaybackMedia(address, expires: ttl.map { Date().addingTimeInterval($0) }, isLive: true)
     case .rumble:
       let json = try await object(
         "https://rumble.com/embedJS/u3/?request=video&ver=2&v=\(source.key)")
@@ -187,7 +185,7 @@ actor PlaybackResolver {
       }
       let progressive = files["progressive"] as? [[String: Any]] ?? []
       return try media(
-        progressive.sorted { ($0["height"] as? Int ?? 0) > ($1["height"] as? Int ?? 0) }.first?[
+        progressive.max { ($0["height"] as? Int ?? 0) < ($1["height"] as? Int ?? 0) }?[
           "url"] as? String)
     case .youtube:
       return try await youtube.resolve(source)
@@ -205,11 +203,11 @@ actor PlaybackResolver {
     }
   }
 
-  private func media(_ text: String?) throws -> PlaybackMedia {
+  private func media(_ text: String?, isLive: Bool? = nil) throws -> PlaybackMedia {
     guard let text, let url = URL(string: text), url.scheme == "https", url.host != nil,
       url.user == nil, url.password == nil
     else { throw PlaybackFailure.unavailable }
-    return PlaybackMedia(url)
+    return PlaybackMedia(url, isLive: isLive)
   }
   private func object(_ address: String, body: Data? = nil, headers: [String: String] = [:])
     async throws -> [String: Any]

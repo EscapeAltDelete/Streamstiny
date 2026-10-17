@@ -146,6 +146,7 @@ import SwiftUI
     }
     do {
       let media = try await resolver.resolve(source)
+      var choices = media.variants
       let useLiveDecoder: Bool
       if source.provider == .youtube {
         // Native HLS handles YouTube adaptation without FFmpeg rendition probing.
@@ -153,29 +154,25 @@ import SwiftUI
       } else if let isLive = media.isLive {
         useLiveDecoder = isLive
       } else {
-        useLiveDecoder = try await resolver.requiresLiveDecoder(media.url, source: source)
+        let inspection = try await resolver.inspectHLS(media.url)
+        useLiveDecoder = inspection.live
+        choices = inspection.variants
       }
       try Task.checkCancellation()
       guard version == generation else { return }
       self.media = media
-      if let choices = media.variants { variants = choices }
+      if choices == nil, highestQuality || (force && qualityID != nil) {
+        choices = (try? await resolver.variants(at: media.url)) ?? []
+        guard version == generation, !Task.isCancelled else { return }
+      }
+      if let choices { variants = choices }
       var edgeURL: URL?
       var variant: HLSVariant?
       if highestQuality, !force {
-        if media.variants == nil {
-          variants = (try? await resolver.variants(at: media.url)) ?? []
-        }
-        guard version == generation, !Task.isCancelled else { return }
-        if highestQuality {
-          variant = variants.first
-          qualityID = variant?.id
-        }
+        variant = variants.first
+        qualityID = variant?.id
       }
       if force, qualityID != nil {
-        if media.variants == nil {
-          variants = (try? await resolver.variants(at: media.url)) ?? []
-        }
-        guard version == generation, !Task.isCancelled else { return }
         variant = variants.first { $0.id == qualityID }
         if let edge, let variant,
           let verified = try? await resolver.verifiedEdge(edge, variant: variant)
@@ -247,7 +244,7 @@ import SwiftUI
       loading = false
       stall?.cancel()
       stall = nil
-      if variants.isEmpty, media.variants == nil { discover(media.url, version: version) }
+      if variants.isEmpty, choices == nil { discover(media.url, version: version) }
     } catch is CancellationError { if version == generation { loading = false } } catch {
       guard version == generation else { return }
       loading = false
@@ -584,30 +581,19 @@ import SwiftUI
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
       if hls.error != nil { recoverFailure() }
-      if buffering && wantsPlayback && !loading && !catchingUp && !waitingForAds && hls.error == nil {
-        scheduleRecovery()
-      } else {
-        stall?.cancel()
-        stall = nil
-      }
       if let controller = engine.pipController, controller.delegate !== self {
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = true
       }
-      adjustAutomaticCatchUp()
-      updateNowPlaying()
-      return
-    }
-    guard player.currentItem != nil else { return }
-    let time = player.currentTime().seconds
-    seconds = time.isFinite ? max(0, time) : 0
-    let length = player.currentItem?.duration.seconds ?? 0
-    duration = length.isFinite ? max(0, length) : 0
-    live = media?.isLive ?? (length.isInfinite || player.currentItem?.duration.isIndefinite == true)
-    playing = player.timeControlStatus == .playing
-    playbackRate = playing ? player.rate : 0
-    buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
-    if let item = player.currentItem {
+    } else if let item = player.currentItem {
+      let time = player.currentTime().seconds
+      seconds = time.isFinite ? max(0, time) : 0
+      let length = item.duration.seconds
+      duration = length.isFinite ? max(0, length) : 0
+      live = media?.isLive ?? (length.isInfinite || item.duration.isIndefinite)
+      playing = player.timeControlStatus == .playing
+      playbackRate = playing ? player.rate : 0
+      buffering = player.timeControlStatus == .waitingToPlayAtSpecifiedRate
       let size = item.presentationSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
       let timing = PlaybackTiming(
@@ -616,8 +602,8 @@ import SwiftUI
       if catchingUp && (!wantsPlayback || item.status != .readyToPlay) {
         endCatchUp()
       }
-    }
-    if buffering && wantsPlayback && !loading && !catchingUp && !waitingForAds {
+    } else { return }
+    if buffering && wantsPlayback && !loading && !catchingUp && !waitingForAds && hls?.error == nil {
       scheduleRecovery()
     } else {
       stall?.cancel()
@@ -716,30 +702,16 @@ import SwiftUI
 
   private func configureRemoteCommands() {
     let center = MPRemoteCommandCenter.shared()
-    commands.append(
-      PlaybackCommandTarget(
-        command: center.playCommand,
-        token: center.playCommand.addTarget { [weak self] _ in
-          Task { @MainActor in
-            self?.endCatchUp()
-            self?.wantsPlayback = true
-            self?.setPlayback(true)
-          }
-          return .success
+    for (command, active) in [(center.playCommand, true), (center.pauseCommand, false)] {
+      commands.append(PlaybackCommandTarget(command: command, token: command.addTarget { [weak self] _ in
+        Task { @MainActor in
+          self?.endCatchUp()
+          self?.wantsPlayback = active
+          self?.setPlayback(active)
         }
-      ))
-    commands.append(
-      PlaybackCommandTarget(
-        command: center.pauseCommand,
-        token: center.pauseCommand.addTarget { [weak self] _ in
-          Task { @MainActor in
-            self?.endCatchUp()
-            self?.wantsPlayback = false
-            self?.setPlayback(false)
-          }
-          return .success
-        }
-      ))
+        return .success
+      }))
+    }
     commands.append(
       PlaybackCommandTarget(
         command: center.changePlaybackPositionCommand,

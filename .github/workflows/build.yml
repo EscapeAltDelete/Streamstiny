@@ -67,10 +67,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Check YouTube live and recording handling
+      - name: Check playback handling
         run: |
-          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/HLSPlaylist.swift Streamstiny/YouTubePlayerResponse.swift Tests/YouTubePlayerResponseTests.swift -o "$RUNNER_TEMP/youtube-tests"
-          "$RUNNER_TEMP/youtube-tests"
+          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{HLSPlaylist,YouTubePlayerResponse,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
+          "$RUNNER_TEMP/playback-tests"
       # All branches restore; only successful main builds save shared caches.
       - name: Restore validated package for these build inputs
         id: package

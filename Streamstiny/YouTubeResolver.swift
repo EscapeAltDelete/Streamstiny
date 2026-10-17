@@ -219,13 +219,13 @@ actor YouTubeResolver {
     }
     // Progressive formats cannot replace an ongoing livestream's HLS transport.
     guard response.isLive != true else { throw PlaybackFailure.unavailable }
-    let formats = (response.streamingData?.formats ?? []).filter {
+    let format = (response.streamingData?.formats ?? []).filter {
       ($0.mimeType ?? "").hasPrefix("video/mp4") && $0.url != nil
-    }.sorted { ($0.height ?? 0) > ($1.height ?? 0) }
-    guard let address = formats.first?.url, let url = Self.mediaURL(address) else {
+    }.max { ($0.height ?? 0) < ($1.height ?? 0) }
+    guard let address = format?.url, let url = Self.mediaURL(address) else {
       throw PlaybackFailure.unavailable
     }
-    return PlaybackMedia(url, expires: Self.expiry(url), isLive: false)
+    return PlaybackMedia(url, expires: Self.expiry(url), isLive: false, variants: [])
   }
 
   private func fetch(_ request: URLRequest) async throws -> Data {

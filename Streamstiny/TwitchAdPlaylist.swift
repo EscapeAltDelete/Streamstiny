@@ -63,9 +63,9 @@ struct TwitchAdPlaylist: Sendable {
     }
     guard !segments.isEmpty else { return nil }
     let ranges = lines.filter { $0.hasPrefix("#EXT-X-DATERANGE:") && Self.adTag($0) }
-    self.segments = segments.map { segment in
-      let rangedAd = ranges.contains { line in
-        let fields = HLSPlaylist.attributes(line)
+      .map(HLSPlaylist.attributes)
+    self.segments = ranges.isEmpty ? segments : segments.map { segment in
+      let rangedAd = ranges.contains { fields in
         // PietSmiet emits this client-side trigger on ordinary live media.
         // It is not evidence of an inserted ad when EXTINF explicitly says live.
         if fields["CLASS"] == "twitch-trigger" {
@@ -118,7 +118,7 @@ struct TwitchAdTimeline {
 
   mutating func render(_ primary: TwitchAdPlaylist, backup: TwitchAdPlaylist?, origin: String, force: Bool = false) -> String {
     let cleanBackup = backup?.cleanSuffix.flatMap { playlist -> TwitchAdPlaylist? in
-      guard !playlist.hasAds, !playlist.segments.contains(where: { $0.encrypted }),
+      guard !playlist.segments.contains(where: { $0.encrypted }),
         !primary.segments.contains(where: { $0.encrypted }),
         (playlist.segments.first?.map == nil) == (primary.segments.first?.map == nil)
       else { return nil }
