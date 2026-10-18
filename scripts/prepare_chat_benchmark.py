@@ -39,7 +39,10 @@ if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():
 }\n'''
     with (source / "ChatAssetLoader.swift").open("a") as output:
         output.write('''\nextension ChatAssetLoader {
-  func clearBenchmarkCache() { session.configuration.urlCache?.removeAllCachedResponses() }
+  func clearBenchmarkCache() {
+    session.configuration.urlCache?.removeAllCachedResponses()
+    if let snapshotURL { try? FileManager.default.removeItem(at: snapshotURL) }
+  }
 }\n''')
 else:
     host += '''\n@MainActor extension EmoteStore {
