@@ -62,6 +62,9 @@ jobs:
       - name: Measure real UIKit chat on Mac Catalyst
         if: inputs.platform == 'catalyst'
         run: |
+          python3 scripts/profile_chat_processes.py build/chat-processes.jsonl &
+          probe=$!
+          trap 'kill "$probe" 2>/dev/null || true' EXIT
           xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=macOS,variant=Mac Catalyst' -parallel-testing-enabled NO -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
       - name: Collect screenshots and measurements
         if: always()
@@ -74,6 +77,7 @@ jobs:
           fi
           ps -eo pid,ppid,rss,%cpu,command > build/chat-artifacts/processes.txt
           cp build/chat-benchmark.log build/chat-artifacts/ 2>/dev/null || true
+          cp build/chat-processes.jsonl build/chat-artifacts/ 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

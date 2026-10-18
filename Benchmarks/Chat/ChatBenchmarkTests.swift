@@ -3,6 +3,7 @@ import SwiftUI
 import QuartzCore
 import MachO
 import Observation
+import WebKit
 @testable import ChatBenchmark
 
 @MainActor final class ChatBenchmarkTests: XCTestCase {
@@ -44,7 +45,7 @@ import Observation
   }
   func findScroll(_ view: UIView) -> UIScrollView? {
     if let scroll = view as? UIScrollView, scroll.isScrollEnabled { return scroll }
-    return view.subviews.lazy.compactMap { findScroll($0) }.first
+    return view.subviews.lazy.compactMap { self.findScroll($0) }.first
   }
   func snapshot(_ window: UIWindow, name: String) {
     let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in window.drawHierarchy(in: window.bounds, afterScreenUpdates: true) }
@@ -76,10 +77,12 @@ import Observation
       }
       try await Task.sleep(for: .seconds(3))
       var metrics = monitor.stop()
+      metrics["sample_started_unix"] = Date().timeIntervalSince1970 - 5
       metrics["presentation_to_first_callback_ms"] = first * 1000
       metrics["app_resident_bytes"] = residentBytes()
       metrics["download_calls_cumulative"] = Double(ChatBenchmarkMetrics.requests)
       metrics["download_bytes_cumulative"] = Double(ChatBenchmarkMetrics.bytes)
+      for (key, value) in await emotes.benchmarkMetrics() { metrics[key] = value }
       results[phase] = metrics
       snapshot(window, name: phase)
       window.rootViewController = UIHostingController(rootView: Text("Between presentations"))

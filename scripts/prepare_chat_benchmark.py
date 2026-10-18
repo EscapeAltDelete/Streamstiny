@@ -4,6 +4,7 @@ import shutil
 
 root = Path("build/chat-benchmark")
 source = root / "Sources"
+shutil.rmtree(source, ignore_errors=True)
 source.mkdir(parents=True, exist_ok=True)
 names = [*Path("Streamstiny").glob("Chat*.swift"), *Path("Streamstiny").glob("Emote*.swift")]
 names += [Path("Streamstiny") / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
@@ -14,7 +15,22 @@ for path in names:
         text = text.replace('"https://cdn.destiny.gg/" + path', '"https://r2cdn.destiny.gg/" + path')
         text = text.replace("let (data, response) = try await session.data(from: url)", "ChatBenchmarkMetrics.requests += 1\n        let (data, response) = try await session.data(from: url)\n        ChatBenchmarkMetrics.bytes += data.count")
     (source / path.name).write_text(text)
-shutil.copy("Benchmarks/Chat/Host.swift", source)
+host = Path("Benchmarks/Chat/Host.swift").read_text()
+if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():
+    host += '''\n@MainActor extension EmoteStore {
+  func benchmarkMetrics() async -> [String: Double] {
+    let value = await assets.metrics
+    return ["download_calls_cumulative": Double(value.requests), "download_bytes_cumulative": Double(value.bytes),
+      "http_cache_hits_cumulative": Double(value.cacheHits), "deduplicated_cumulative": Double(value.deduplicated)]
+  }
+}\n'''
+else:
+    host += '''\n@MainActor extension EmoteStore {
+  func benchmarkMetrics() async -> [String: Double] {
+    ["download_calls_cumulative": Double(ChatBenchmarkMetrics.requests), "download_bytes_cumulative": Double(ChatBenchmarkMetrics.bytes)]
+  }
+}\n'''
+(source / "Host.swift").write_text(host)
 for path in Path("Streamstiny").glob("Chat*.js"):
     shutil.copy(path, source)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
@@ -55,3 +71,10 @@ schemes:
     test:
       targets: [ChatBenchmarkTests]
 """)
+if (source / "ChatRenderer.js").exists():
+    project = root / "project.yml"
+    project.write_text(project.read_text().replace("sources: [Sources]", """sources:
+      - path: Sources
+        excludes: [ChatRenderer.js]
+      - path: Sources/ChatRenderer.js
+        buildPhase: resources"""))
