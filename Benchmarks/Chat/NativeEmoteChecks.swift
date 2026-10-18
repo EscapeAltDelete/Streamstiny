@@ -113,8 +113,12 @@ import ImageIO
       let decoded = (0..<count).filter { index in
         autoreleasepool { CGImageSourceCreateImageAtIndex(source!, index, [kCGImageSourceShouldCache: false] as CFDictionary) != nil }
       }.count
-      platformDecoding.append(["name": item["name"]!, "imageio_frames": count, "decoded_frames": decoded,
-        "type": source.flatMap { CGImageSourceGetType($0) as String? } ?? "unrecognized"])
+      var details: [String: Any] = ["name": item["name"]!, "imageio_frames": count, "decoded_frames": decoded,
+        "type": source.flatMap { CGImageSourceGetType($0) as String? } ?? "unrecognized"]
+      if let source, let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any], JSONSerialization.isValidJSONObject(properties) {
+        details["properties"] = properties
+      }
+      platformDecoding.append(details)
     }
     results["platform_imageio"] = platformDecoding
     snapshot(window, name: "native-emote-validation")
