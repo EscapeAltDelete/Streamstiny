@@ -76,8 +76,8 @@ import WebKit
       let monitor = Frames(); monitor.start()
       let started = CACurrentMediaTime()
       let controller = UIHostingController(rootView: ChatEmotePicker(emotes: emotes, account: user, insert: { _ in }))
-      window.rootViewController = controller
-      window.makeKeyAndVisible()
+      controller.modalPresentationStyle = .pageSheet
+      background.present(controller, animated: false)
       controller.view.layoutIfNeeded()
       while monitor.times.isEmpty && CACurrentMediaTime() - started < 3 { try await Task.sleep(for: .milliseconds(5)) }
       XCTAssertFalse(monitor.times.isEmpty, "Display callbacks must be available for a valid measurement")
@@ -98,6 +98,8 @@ import WebKit
       metrics["sample_ended_unix"] = Date().timeIntervalSince1970
       metrics["presentation_to_first_callback_ms"] = first * 1000
       metrics["content_ready_ms"] = readyMilliseconds
+      metrics["picker_width"] = controller.view.bounds.width
+      metrics["picker_height"] = controller.view.bounds.height
       if let web { for (key, value) in try await browserFrames(web) { metrics[key] = value } }
       metrics["app_resident_bytes"] = residentBytes()
       metrics["download_calls_cumulative"] = Double(ChatBenchmarkMetrics.requests)
@@ -105,17 +107,16 @@ import WebKit
       for (key, value) in await emotes.benchmarkMetrics() { metrics[key] = value }
       results[phase] = metrics
       snapshot(window, name: phase)
-      window.rootViewController = background
+      background.dismiss(animated: false)
       try await Task.sleep(for: .milliseconds(250))
     }
-    let feed = Feed()
+    let feed = emptyFeed
     let words = ["Listening", "pepeW", "PepoPunch", "PEPE", "YEE", "BlueWave"]
     func message(_ index: Int) -> ChatMessage {
       ChatMessage(payload: ["nick": "Benchmark\(index % 20)", "data": "Message \(index) " + words[index % words.count], "timestamp": Double(1700000000000 + index), "features": ["flair127"]])
     }
     feed.messages = (0..<1000).map(message)
-    let timeline = UIHostingController(rootView: Timeline(feed: feed, emotes: emotes))
-    window.rootViewController = timeline
+    let timeline = background
     try await Task.sleep(for: .seconds(2))
     let monitor = Frames(); monitor.start()
     let web = findWeb(timeline.view)
