@@ -95,6 +95,10 @@ import CryptoKit
     XCTAssertEqual(Set(failures.compactMap { $0["name"] as? String }), Set((direct["errors"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }), "Production transport must decode every format supported by this platform's direct first-party renderer")
     results["full_catalog"] = audit
     results["direct_https_format_failures"] = direct
+    let loadEvents = "return await Promise.all(catalog.map(item=>new Promise(resolve=>{const image=new Image();image.onload=()=>resolve({name:item.name,loaded:true,width:image.naturalWidth,height:image.naturalHeight});image.onerror=()=>resolve({name:item.name,loaded:false});image.src=item.url})));"
+    let failingURLs = failures.map { ["name": $0["name"]!, "url": ($0["url"] as! String).replacingOccurrences(of: "dgg-asset:", with: "https:")] }
+    let loads: [[String: Any]] = try await javascript(reference, loadEvents, arguments: ["catalog": failingURLs])
+    results["direct_https_load_events"] = loads
     snapshot(window, name: "native-emote-validation")
     print("CHAT_NATIVE_VALIDATION " + String(decoding: try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys]), as: UTF8.self))
   }

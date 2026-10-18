@@ -12,6 +12,9 @@ names = [*production.glob("Chat*.swift"), *production.glob("Emote*.swift")]
 names += [production / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
 for path in names:
     text = path.read_text()
+    # The hosted runner forces Reduce Motion. Compare both implementations with
+    # animations explicitly enabled; production accessibility behavior is untouched.
+    text = text.replace("UIAccessibility.isReduceMotionEnabled", "false")
     if path.name == "EmoteStore.swift":
         # Hold the catalog source constant when measuring the legacy decoder.
         text = text.replace('"https://cdn.destiny.gg/" + path', '"https://r2cdn.destiny.gg/" + path')
@@ -45,7 +48,8 @@ else:
 }\n''')
 (source / "Host.swift").write_text(host)
 for path in production.glob("Chat*.js"):
-    shutil.copy(path, source)
+    text = path.read_text().replace("!matchMedia('(prefers-reduced-motion: reduce)').matches", "true")
+    (source / path.name).write_text(text)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
 shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)
 (root / "project.yml").write_text("""name: ChatBenchmark
