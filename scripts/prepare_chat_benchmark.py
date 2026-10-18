@@ -2,6 +2,8 @@
 from pathlib import Path
 import shutil
 import sys
+import os
+import json
 
 root = Path("build/chat-benchmark")
 source = root / "Sources"
@@ -96,3 +98,10 @@ if (source / "ChatRenderer.js").exists():
         excludes: [ChatRenderer.js]
       - path: Sources/ChatRenderer.js
         buildPhase: resources"""))
+
+# Apple's documented iOS 18.5 Simulator loader fix; deployment stays at iOS 17.
+# https://bugs.webkit.org/show_bug.cgi?id=293831
+if swift_libraries := os.environ.get("CHAT_SIMULATOR_SWIFT_LIBRARIES"):
+    project = root / "project.yml"
+    environment = "      environmentVariables:\n        DYLD_FALLBACK_LIBRARY_PATH: " + json.dumps(swift_libraries) + "\n"
+    project.write_text(project.read_text().replace("    test:\n", "    run:\n" + environment + "    test:\n" + environment))

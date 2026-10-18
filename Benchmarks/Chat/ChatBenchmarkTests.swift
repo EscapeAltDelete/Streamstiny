@@ -78,11 +78,20 @@ import WebKit
       let started = CACurrentMediaTime()
       let controller = UIHostingController(rootView: ChatEmotePicker(emotes: emotes, account: user, insert: { _ in }))
       controller.modalPresentationStyle = .pageSheet
-      background.present(controller, animated: false)
+      await withCheckedContinuation { continuation in
+        background.present(controller, animated: false) { continuation.resume() }
+      }
       controller.view.layoutIfNeeded()
       while monitor.times.isEmpty && CACurrentMediaTime() - started < 3 { try await Task.sleep(for: .milliseconds(5)) }
       XCTAssertFalse(monitor.times.isEmpty, "Display callbacks must be available for a valid measurement")
       let first = CACurrentMediaTime() - started
+      if emotes.benchmarkStyles != nil {
+        for _ in 0..<250 {
+          if findWeb(controller.view) != nil { break }
+          try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNotNil(findWeb(controller.view), "A valid WebKit sample requires the picker renderer")
+      }
       let web = findWeb(controller.view)
       var readyMilliseconds = first * 1000
       if let web {

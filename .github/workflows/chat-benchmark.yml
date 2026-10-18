@@ -59,6 +59,10 @@ jobs:
           echo "SIMULATOR_UDID=$device" >> "$GITHUB_ENV"
           xcrun simctl boot "$device"
           xcrun simctl bootstatus "$device" -b
+          swift_libraries=$(xcrun simctl list runtimes -j | python3 -c 'import json,sys,pathlib; r=next(r for r in json.load(sys.stdin)["runtimes"] if r["identifier"]=="com.apple.CoreSimulator.SimRuntime.iOS-18-5"); print(pathlib.Path(r["bundlePath"])/"Contents/Resources/RuntimeRoot/System/Cryptexes/OS/usr/lib/swift")')
+          test -f "$swift_libraries/libswiftWebKit.dylib"
+          CHAT_SIMULATOR_SWIFT_LIBRARIES="$swift_libraries" python3 scripts/prepare_chat_benchmark.py
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
       - name: Measure real chat and picker on iOS Simulator
         if: inputs.platform == 'simulator'
         run: |
