@@ -24,6 +24,51 @@ import ImageIO
     XCTFail("Chat renderer never produced message content")
     throw URLError(.timedOut)
   }
+  func testMessageActionsAndPruning() async throws {
+    let defaults = UserDefaults.standard
+    let previous = defaults.object(forKey: "removedChatMessages")
+    defaults.set(1, forKey: "removedChatMessages")
+    defer { defaults.set(previous, forKey: "removedChatMessages") }
+    let emotes = EmoteStore()
+    var removed = ChatMessage(payload: ["uuid": "removed-row", "nick": "Benchmark", "data": "Deleted text"])
+    removed.removed = true
+    let other = ChatMessage(payload: ["uuid": "stable-row", "nick": "Benchmark", "data": "Unchanged text"])
+    func list(_ messages: [ChatMessage]) -> ChatList {
+      ChatList(messages: messages, emotes: emotes, fontSize: 16, timestamps: false,
+        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in })
+    }
+    let coordinator = list([removed, other]).makeCoordinator()
+    let web = coordinator.makeWebView()
+    defer { coordinator.stop(); web.removeFromSuperview() }
+    let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
+    let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = host.view.bounds
+    try await waitForRenderer(web)
+    let initial: Bool = try await javascript(web, "window.stableRow=document.querySelector('[data-message=stable-row]');return document.body.textContent.includes('message deleted') && !document.body.textContent.includes('Deleted text');")
+    XCTAssertTrue(initial)
+    for expected in [true, false] {
+      let action = try XCTUnwrap(coordinator.actions(["id": removed.id]).first as? UIAction)
+      let button = UIButton(type: .system, primaryAction: action)
+      button.sendActions(for: .primaryActionTriggered)
+      var matches = false
+      for _ in 0..<100 {
+        matches = try await javascript(web, "return document.body.textContent.includes('Deleted text')===expected;", arguments: ["expected": expected])
+        if matches { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertTrue(matches, "Reveal/hide must invalidate rendering without losing message actions")
+      let stable: Bool = try await javascript(web, "return stableRow===document.querySelector('[data-message=stable-row]');")
+      XCTAssertTrue(stable)
+      XCTAssertFalse(coordinator.actions(["id": removed.id]).isEmpty)
+    }
+    coordinator.parent = list([]); coordinator.refresh()
+    for _ in 0..<100 {
+      let count: Int = try await javascript(web, "return document.querySelectorAll('[data-message]').length;")
+      if count == 0 { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(coordinator.actions(["id": removed.id]).isEmpty, "Pruning releases the canonical message state")
+  }
   func testNativeEmoteRendering() async throws {
     let emotes = EmoteStore()
     await emotes.load(force: true)
