@@ -64,8 +64,7 @@ jobs:
       - name: Run existing tests
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          xcrun swiftc -swift-version 5 -parse-as-library Streamstiny/{ChatModels,ChatProtocol,HLSPlaylist,TwitchAdPlaylist,StreamSource,PlaybackResolver,YouTubeResolver,TwitchResolver}.swift Tests/*.swift -o "$RUNNER_TEMP/playback-tests"
-          "$RUNNER_TEMP/playback-tests"
+          bash scripts/test_playback.sh
       - name: Measure baseline on this runner
         if: inputs.compare_ref != ''
         env:
