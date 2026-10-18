@@ -2,7 +2,7 @@
 set -euo pipefail
 source_root="${1:-.}/Streamstiny"
 sources=()
-for name in ChatModels ChatProtocol HLSPlaylist TwitchAdPlaylist StreamSource PlaybackResolver YouTubeResolver TwitchResolver ChatHTML ChatLinks ChatAssets; do
+for name in ChatModels ChatProtocol HLSPlaylist TwitchAdPlaylist StreamSource ChatHTML ChatLinks ChatAssets; do
   sources+=("$source_root/$name.swift")
 done
 output="${RUNNER_TEMP:-/tmp}/streamstiny-runtime-benchmark"

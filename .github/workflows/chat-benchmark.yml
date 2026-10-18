@@ -82,7 +82,10 @@ jobs:
       - name: Collect screenshots and measurements
         if: always()
         run: |
-          container=$(xcrun simctl get_app_container booted gg.streamstiny.chatbenchmark data 2>/dev/null || true)
+          container=""
+          if [ "${{ inputs.platform }}" = simulator ]; then
+            container=$(xcrun simctl get_app_container booted gg.streamstiny.chatbenchmark data 2>/dev/null || true)
+          fi
           mkdir -p build/chat-artifacts
           if [ -n "$container" ]; then cp -R "$container/Documents/." build/chat-artifacts/; fi
           if [ -d "$HOME/Library/Containers/gg.streamstiny.chatbenchmark/Data/Documents" ]; then

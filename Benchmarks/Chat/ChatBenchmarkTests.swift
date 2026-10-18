@@ -26,13 +26,16 @@ import WebKit
 
   @Observable final class Feed {
     var messages: [ChatMessage] = []
+    var visible = true
   }
   struct Timeline: View {
     let feed: Feed
     let emotes: EmoteStore
     var body: some View {
+      if feed.visible {
       ChatList(messages: emotes.combining(feed.messages), emotes: emotes, fontSize: 16, timestamps: true,
         onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in }, stateRevision: emotes.revision)
+      }
     }
   }
   func residentBytes() -> Double {
@@ -67,9 +70,10 @@ import WebKit
     await emotes.load(force: true)
     XCTAssertGreaterThan(emotes.catalog.count, 300, "Benchmark requires the real current catalog")
     guard emotes.catalog.count > 300 else { throw URLError(.cannotLoadFromNetwork) }
+    let metadataSeconds = CACurrentMediaTime() - loadStart
     try await Task.sleep(for: .seconds(2))
     let user = ChatUser(["nick": "Benchmark", "roles": ["PROTECTED"], "subscription": ["tier": 5], "patreonMember": true])
-    var results: [String: Any] = ["catalog_count": emotes.catalog.count, "metadata_seconds": CACurrentMediaTime() - loadStart,
+    var results: [String: Any] = ["catalog_count": emotes.catalog.count, "metadata_seconds": metadataSeconds,
       "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
       "note": "App RSS excludes any WebKit content/network subprocesses; frame intervals use CADisplayLink, not instrumented GPU presentations."]
     for phase in ["cold_picker", "warm_picker", "scroll_picker"] {
@@ -144,6 +148,20 @@ import WebKit
     snapshot(window, name: "chat-load")
     feed.messages = words.enumerated().map { ChatMessage(payload: ["nick": "Benchmark", "data": $0.element, "timestamp": Double(1700000100000 + $0.offset), "features": ["flair127"]]) }
     for index in 0..<4 { try await Task.sleep(for: .milliseconds(230)); snapshot(window, name: "named-emotes-\(index)") }
+    // Model production hiding: remove the renderer while retaining the feed/store.
+    feed.visible = false
+    try await Task.sleep(for: .seconds(2))
+    let hiddenStart = Date().timeIntervalSince1970
+    let hiddenFrames = Frames(); hiddenFrames.start()
+    for index in 0..<100 {
+      feed.messages = Array((feed.messages + (0..<5).map { message(2000 + index * 5 + $0) }).suffix(1000))
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    var hidden = hiddenFrames.stop()
+    hidden["sample_started_unix"] = hiddenStart
+    hidden["sample_ended_unix"] = Date().timeIntervalSince1970
+    hidden["app_resident_bytes"] = residentBytes()
+    results["hidden_chat"] = hidden
     let data = try JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys])
     print("CHAT_BENCHMARK " + String(decoding: data, as: UTF8.self))
     try data.write(to: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("results.json"))
