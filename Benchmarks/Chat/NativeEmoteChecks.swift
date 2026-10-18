@@ -2,6 +2,7 @@ import XCTest
 import SwiftUI
 import WebKit
 import CryptoKit
+import ImageIO
 @testable import ChatBenchmark
 
 @MainActor extension ChatBenchmarkTests {
@@ -104,6 +105,18 @@ import CryptoKit
     let failingURLs = failures.map { ["name": $0["name"]!, "url": ($0["url"] as! String).replacingOccurrences(of: "dgg-asset:", with: "https:")] }
     let loads: [[String: Any]] = try await javascript(reference, loadEvents, arguments: ["catalog": failingURLs])
     results["direct_https_load_events"] = loads
+    var platformDecoding: [[String: Any]] = []
+    for item in failingURLs {
+      let (data, _) = try await URLSession.shared.data(from: URL(string: item["url"] as! String)!)
+      let source = CGImageSourceCreateWithData(data as CFData, nil)
+      let count = source.map { CGImageSourceGetCount($0) } ?? 0
+      let decoded = (0..<count).filter { index in
+        autoreleasepool { CGImageSourceCreateImageAtIndex(source!, index, [kCGImageSourceShouldCache: false] as CFDictionary) != nil }
+      }.count
+      platformDecoding.append(["name": item["name"]!, "imageio_frames": count, "decoded_frames": decoded,
+        "type": source.flatMap { CGImageSourceGetType($0) as String? } ?? "unrecognized"])
+    }
+    results["platform_imageio"] = platformDecoding
     snapshot(window, name: "native-emote-validation")
     print("CHAT_NATIVE_VALIDATION " + String(decoding: try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys]), as: UTF8.self))
   }
