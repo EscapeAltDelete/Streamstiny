@@ -74,6 +74,11 @@ import CryptoKit
       try await Task.sleep(for: .milliseconds(20))
     }
     let sample = "document.getAnimations().forEach(a=>{a.pause();a.currentTime=time});const c=getComputedStyle(document.querySelector('.PepoPunch'));return [c.backgroundPosition,c.transform,c.width,c.animationDuration,c.animationTimingFunction,c.animationIterationCount,c.animationDelay];"
+    // PepoPunch deliberately finishes after three loops. Restart both fixtures
+    // before sampling: finished animations aren't returned by getAnimations().
+    let restart = "const e=document.querySelector('.PepoPunch');e.style.animation='none';void e.offsetWidth;e.style.animation='';return true;"
+    let _: Bool = try await javascript(web, restart)
+    let _: Bool = try await javascript(reference, restart)
     var samples: [[String: Any]] = []
     for time in [0, 125, 375, 875, 1100, 2750, 4500] {
       let actual: [String] = try await javascript(web, sample, arguments: ["time": time])

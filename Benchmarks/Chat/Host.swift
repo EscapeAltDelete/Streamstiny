@@ -2,7 +2,7 @@ import SwiftUI
 
 // The benchmark hosts the real chat without starting playback or authenticated chat.
 enum PlaybackResolver {
-  static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
+  static let userAgent = "Streamstiny/\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")"
 }
 enum TwitchResolver { static let userAgent = PlaybackResolver.userAgent }
 

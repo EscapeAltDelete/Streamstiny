@@ -57,10 +57,16 @@ import WebKit
     let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
     let emotes = EmoteStore()
     await emotes.clearBenchmarkCache()
+    // In the application the chat surface exists before the picker opens.
+    // Keep that context alive for both implementations, without loading emotes.
+    let emptyFeed = Feed()
+    let background = UIHostingController(rootView: Timeline(feed: emptyFeed, emotes: emotes))
+    window.rootViewController = background; window.makeKeyAndVisible(); background.view.layoutIfNeeded()
     let loadStart = CACurrentMediaTime()
     await emotes.load(force: true)
     XCTAssertGreaterThan(emotes.catalog.count, 300, "Benchmark requires the real current catalog")
     guard emotes.catalog.count > 300 else { throw URLError(.cannotLoadFromNetwork) }
+    try await Task.sleep(for: .seconds(2))
     let user = ChatUser(["nick": "Benchmark", "roles": ["PROTECTED"], "subscription": ["tier": 5], "patreonMember": true])
     var results: [String: Any] = ["catalog_count": emotes.catalog.count, "metadata_seconds": CACurrentMediaTime() - loadStart,
       "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
@@ -99,7 +105,7 @@ import WebKit
       for (key, value) in await emotes.benchmarkMetrics() { metrics[key] = value }
       results[phase] = metrics
       snapshot(window, name: phase)
-      window.rootViewController = UIHostingController(rootView: Text("Between presentations"))
+      window.rootViewController = background
       try await Task.sleep(for: .milliseconds(250))
     }
     let feed = Feed()
