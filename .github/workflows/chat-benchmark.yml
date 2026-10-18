@@ -7,6 +7,10 @@ on:
         type: choice
         options: [catalyst, simulator]
         default: catalyst
+      review_patch:
+        description: Optional gzip/base64 working-tree patch to measure before committing app changes
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -20,6 +24,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Apply explicitly requested review patch
+        if: inputs.review_patch != ''
+        env:
+          REVIEW_PATCH: ${{ inputs.review_patch }}
+        run: python3 scripts/apply_review_patch.py
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ~/Library/Caches/Streamstiny/xcodegen.zip
