@@ -1,13 +1,15 @@
 """Generate an isolated iOS chat benchmark from the actual production sources."""
 from pathlib import Path
 import shutil
+import sys
 
 root = Path("build/chat-benchmark")
 source = root / "Sources"
 shutil.rmtree(source, ignore_errors=True)
 source.mkdir(parents=True, exist_ok=True)
-names = [*Path("Streamstiny").glob("Chat*.swift"), *Path("Streamstiny").glob("Emote*.swift")]
-names += [Path("Streamstiny") / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
+production = Path(sys.argv[1] if len(sys.argv) > 1 else ".") / "Streamstiny"
+names = [*production.glob("Chat*.swift"), *production.glob("Emote*.swift")]
+names += [production / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
 for path in names:
     text = path.read_text()
     if path.name == "EmoteStore.swift":
@@ -24,7 +26,12 @@ if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():
       "http_cache_hits_cumulative": Double(value.cacheHits), "deduplicated_cumulative": Double(value.deduplicated)]
   }
   var benchmarkStyles: String? { stylesheet }
+  func clearBenchmarkCache() async { await assets.clearBenchmarkCache() }
 }\n'''
+    with (source / "ChatAssetLoader.swift").open("a") as output:
+        output.write('''\nextension ChatAssetLoader {
+  func clearBenchmarkCache() { session.configuration.urlCache?.removeAllCachedResponses() }
+}\n''')
 else:
     host += '''\n@MainActor extension EmoteStore {
   func benchmarkMetrics() async -> [String: Double] {
@@ -32,8 +39,12 @@ else:
   }
   var benchmarkStyles: String? { nil }
 }\n'''
+    with (source / "EmoteStore.swift").open("a") as output:
+        output.write('''\n@MainActor extension EmoteStore {
+  func clearBenchmarkCache() async { session.configuration.urlCache?.removeAllCachedResponses() }
+}\n''')
 (source / "Host.swift").write_text(host)
-for path in Path("Streamstiny").glob("Chat*.js"):
+for path in production.glob("Chat*.js"):
     shutil.copy(path, source)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
 shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)

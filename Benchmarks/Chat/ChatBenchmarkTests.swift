@@ -56,9 +56,11 @@ import WebKit
   func testChatPerformance() async throws {
     let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
     let emotes = EmoteStore()
+    await emotes.clearBenchmarkCache()
     let loadStart = CACurrentMediaTime()
     await emotes.load(force: true)
     XCTAssertGreaterThan(emotes.catalog.count, 300, "Benchmark requires the real current catalog")
+    guard emotes.catalog.count > 300 else { throw URLError(.cannotLoadFromNetwork) }
     let user = ChatUser(["nick": "Benchmark", "roles": ["PROTECTED"], "subscription": ["tier": 5], "patreonMember": true])
     var results: [String: Any] = ["catalog_count": emotes.catalog.count, "metadata_seconds": CACurrentMediaTime() - loadStart,
       "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
@@ -74,6 +76,12 @@ import WebKit
       while monitor.times.isEmpty && CACurrentMediaTime() - started < 3 { try await Task.sleep(for: .milliseconds(5)) }
       XCTAssertFalse(monitor.times.isEmpty, "Display callbacks must be available for a valid measurement")
       let first = CACurrentMediaTime() - started
+      let web = findWeb(controller.view)
+      var readyMilliseconds = first * 1000
+      if let web {
+        try await startBrowserFrames(web)
+        readyMilliseconds = (CACurrentMediaTime() - started) * 1000
+      }
       try await Task.sleep(for: .seconds(2))
       if phase == "scroll_picker", let scroll = findScroll(controller.view) {
         scroll.setContentOffset(CGPoint(x: 0, y: max(0, scroll.contentSize.height - scroll.bounds.height)), animated: true)
@@ -83,6 +91,8 @@ import WebKit
       metrics["sample_started_unix"] = sampleStart
       metrics["sample_ended_unix"] = Date().timeIntervalSince1970
       metrics["presentation_to_first_callback_ms"] = first * 1000
+      metrics["content_ready_ms"] = readyMilliseconds
+      if let web { for (key, value) in try await browserFrames(web) { metrics[key] = value } }
       metrics["app_resident_bytes"] = residentBytes()
       metrics["download_calls_cumulative"] = Double(ChatBenchmarkMetrics.requests)
       metrics["download_bytes_cumulative"] = Double(ChatBenchmarkMetrics.bytes)
@@ -98,15 +108,19 @@ import WebKit
       ChatMessage(payload: ["nick": "Benchmark\(index % 20)", "data": "Message \(index) " + words[index % words.count], "timestamp": Double(1700000000000 + index), "features": ["flair127"]])
     }
     feed.messages = (0..<1000).map(message)
-    window.rootViewController = UIHostingController(rootView: Timeline(feed: feed, emotes: emotes))
+    let timeline = UIHostingController(rootView: Timeline(feed: feed, emotes: emotes))
+    window.rootViewController = timeline
     try await Task.sleep(for: .seconds(2))
     let monitor = Frames(); monitor.start()
+    let web = findWeb(timeline.view)
+    if let web { try await startBrowserFrames(web) }
     let loadStartUnix = Date().timeIntervalSince1970
     for index in 0..<100 {
       feed.messages = Array((feed.messages + (0..<5).map { message(1000 + index * 5 + $0) }).suffix(1000))
       try await Task.sleep(for: .milliseconds(50))
     }
     var metrics = monitor.stop(); metrics["app_resident_bytes"] = residentBytes()
+    if let web { for (key, value) in try await browserFrames(web) { metrics[key] = value } }
     metrics["sample_started_unix"] = loadStartUnix
     metrics["sample_ended_unix"] = Date().timeIntervalSince1970
     results["chat_100_messages_per_second"] = metrics
@@ -116,5 +130,20 @@ import WebKit
     let data = try JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys])
     print("CHAT_BENCHMARK " + String(decoding: data, as: UTF8.self))
     try data.write(to: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("results.json"))
+  }
+  func startBrowserFrames(_ web: WKWebView) async throws {
+    for _ in 0..<250 {
+      if (try? await web.evaluateJavaScript("Boolean(window.ChatRenderer && document.getElementById('content').children.length)")) as? Bool == true {
+        _ = try await web.evaluateJavaScript("window.benchmarkFrames=[];window.benchmarkRunning=true;requestAnimationFrame(function tick(t){if(!window.benchmarkRunning)return;benchmarkFrames.push(t);requestAnimationFrame(tick)});")
+        return
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTFail("Browser content did not become ready")
+    throw URLError(.timedOut)
+  }
+  func browserFrames(_ web: WKWebView) async throws -> [String: Double] {
+    let script = "window.benchmarkRunning=false;const t=window.benchmarkFrames,g=t.slice(1).map((v,i)=>v-t[i]).sort((a,b)=>a-b);return {browser_frames:t.length,browser_fps:t.length>1?(t.length-1)*1000/(t[t.length-1]-t[0]):0,browser_p95_frame_ms:g[Math.min(g.length-1,Math.floor(g.length*.95))]||0,browser_max_frame_ms:g[g.length-1]||0};"
+    return try await web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) as! [String: Double]
   }
 }

@@ -11,6 +11,10 @@ on:
         description: Optional gzip/base64 working-tree patch to measure before committing app changes
         type: string
         default: ''
+      baseline_ref:
+        description: Optional commit to benchmark afterward on the same runner with cold image caches
+        type: string
+        default: ''
 permissions:
   contents: read
 jobs:
@@ -79,6 +83,27 @@ jobs:
           cp build/chat-benchmark.log build/chat-artifacts/ 2>/dev/null || true
           cp build/chat-processes.jsonl build/chat-artifacts/ 2>/dev/null || true
           xcrun xcresulttool export attachments --path build/chat-results.xcresult --output-path build/chat-artifacts/attachments 2>/dev/null || true
+      - name: Measure baseline on the same Mac Catalyst runner
+        if: success() && inputs.platform == 'catalyst' && inputs.baseline_ref != ''
+        env:
+          BASELINE_REF: ${{ inputs.baseline_ref }}
+        run: |
+          [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "$BASELINE_REF"
+          mkdir -p build/chat-baseline-source
+          git archive "$BASELINE_REF" | tar -x -C build/chat-baseline-source
+          python3 scripts/prepare_chat_benchmark.py build/chat-baseline-source
+          "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
+          python3 scripts/profile_chat_processes.py build/chat-baseline-processes.jsonl &
+          probe=$!
+          trap 'kill "$probe" 2>/dev/null || true' EXIT
+          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=macOS,variant=Mac Catalyst' -parallel-testing-enabled NO -derivedDataPath build/chat-baseline-derived -resultBundlePath build/chat-baseline-results.xcresult > build/chat-baseline.log 2>&1
+      - name: Collect paired baseline
+        if: always() && inputs.baseline_ref != ''
+        run: |
+          cp build/chat-baseline.log build/chat-artifacts/ 2>/dev/null || true
+          cp build/chat-baseline-processes.jsonl build/chat-artifacts/ 2>/dev/null || true
+          xcrun xcresulttool export attachments --path build/chat-baseline-results.xcresult --output-path build/chat-artifacts/baseline-attachments 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
@@ -86,4 +111,5 @@ jobs:
           path: |
             build/chat-artifacts
             build/chat-results.xcresult
+            build/chat-baseline-results.xcresult
           retention-days: 7
