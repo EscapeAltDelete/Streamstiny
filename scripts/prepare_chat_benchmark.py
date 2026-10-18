@@ -6,7 +6,7 @@ root = Path("build/chat-benchmark")
 source = root / "Sources"
 source.mkdir(parents=True, exist_ok=True)
 names = [*Path("Streamstiny").glob("Chat*.swift"), *Path("Streamstiny").glob("Emote*.swift")]
-names += [Path("Streamstiny") / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "DestinyAccount.swift", "TokenStore.swift"]]
+names += [Path("Streamstiny") / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
 for path in names:
     text = path.read_text()
     if path.name == "EmoteStore.swift":
