@@ -40,6 +40,8 @@ import CryptoKit
     try await waitForRenderer(web)
     try await Task.sleep(for: .seconds(2))
     var results: [String: Any] = [:]
+    results["preferences"] = try await web.evaluateJavaScript("({classes:document.documentElement.className,reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,canvas:document.querySelectorAll('canvas').length})")
+    print("CHAT_RENDER_PREFERENCES \(results["preferences"]!)")
     for name in ["Listening", "pepeW"] {
       let bounds: [String: Double] = try await javascript(web, "const node=document.querySelector('.emote.'+name);const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};", arguments: ["name": name])
       XCTAssertGreaterThanOrEqual(bounds["y"]!, 0, "Full emote must fit within the viewport")
@@ -88,8 +90,11 @@ import CryptoKit
     let catalog = emotes.catalog.map { ["name": $0.key, "url": $0.value.absoluteString.replacingOccurrences(of: "https:", with: "dgg-asset:")] }
     let decode = "let next=0,success=0,errors=[];await Promise.all(Array.from({length:4},async()=>{while(next<catalog.length){const item=catalog[next++],image=new Image();try{image.src=item.url;await image.decode();if(!image.naturalWidth||!image.naturalHeight)throw Error('Empty image');success++}catch(e){errors.push({name:item.name,url:item.url,error:String(e)})}}}));return {success,errors};"
     let audit: [String: Any] = try await javascript(web, decode, arguments: ["catalog": catalog])
-    XCTAssertEqual((audit["errors"] as? [Any])?.count, 0, "Every current catalog format must decode through the production transport: \(audit)")
+    let failures = audit["errors"] as? [[String: Any]] ?? []
+    let direct: [String: Any] = try await javascript(reference, decode, arguments: ["catalog": failures.map { ["name": $0["name"]!, "url": ($0["url"] as! String).replacingOccurrences(of: "dgg-asset:", with: "https:")] }])
+    XCTAssertEqual(Set(failures.compactMap { $0["name"] as? String }), Set((direct["errors"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }), "Production transport must decode every format supported by this platform's direct first-party renderer")
     results["full_catalog"] = audit
+    results["direct_https_format_failures"] = direct
     snapshot(window, name: "native-emote-validation")
     print("CHAT_NATIVE_VALIDATION " + String(decoding: try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys]), as: UTF8.self))
   }

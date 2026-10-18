@@ -66,6 +66,9 @@ jobs:
       - name: Measure real UIKit chat on Mac Catalyst
         if: inputs.platform == 'catalyst'
         run: |
+          defaults read com.apple.universalaccess reduceMotion || true
+          defaults write com.apple.universalaccess reduceMotion -bool false
+          defaults write gg.streamstiny.chatbenchmark disableEmoteAnimations -bool false
           python3 scripts/profile_chat_processes.py build/chat-processes.jsonl &
           probe=$!
           trap 'kill "$probe" 2>/dev/null || true' EXIT

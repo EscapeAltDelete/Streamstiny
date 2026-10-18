@@ -12,7 +12,7 @@ def processes():
 
 
 def webkit(command):
-    return "com.apple.WebKit.WebContent" in command or "com.apple.WebKit.Networking" in command
+    return "com.apple.WebKit." in command
 
 
 existing = {row[0] for row in processes() if webkit(row[4])}
