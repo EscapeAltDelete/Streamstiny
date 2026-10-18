@@ -28,7 +28,11 @@ targets:
   Streamstiny:
     type: application
     platform: iOS
-    sources: [Streamstiny]
+    sources:
+      - path: Streamstiny
+        excludes: [ChatRenderer.js]
+      - path: Streamstiny/ChatRenderer.js
+        buildPhase: resources
     dependencies:
       - package: KSPlayer
     info:

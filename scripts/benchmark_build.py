@@ -50,7 +50,7 @@ def main():
         "package_lock_sha256": hashlib.sha256(Path("build/SourcePackages/Package.resolved").read_bytes()).hexdigest(),
         "command": command, "builds": {},
     }
-    source = Path("Streamstiny/ChatAttachmentSize.swift")
+    source = Path("Streamstiny/ChatTextRules.swift")
     original = source.read_bytes()
     source_stat = source.stat()
     try:

@@ -94,7 +94,7 @@ enum ChatEvent: Sendable {
   case vote(option: Int, quantity: Int)
   case voteCounted(Int)
   case whisperSent
-  case reloadAssets
+  case reloadAssets(String?)
   case reload
   case other
 }
@@ -102,12 +102,15 @@ enum ChatEvent: Sendable {
 enum ChatProtocol {
   static func decode(_ frame: String, depth: Int = 0) throws -> ChatEvent {
     guard depth < 4 else { return .other }
-    guard let split = frame.firstIndex(of: " ") else { return .other }
-    let command = String(frame[..<split])
-    let body = String(frame[frame.index(after: split)...])
+    let parts = frame.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: false)
+    let command = parts.first.map(String.init) ?? ""
+    let body = parts.count > 1 ? String(parts[1]) : ""
     if command == "PING" { return .ping(body) }
     if command == "RELOAD" { return .reload }
-    if command == "REFRESHCHATASSETS" { return .reloadAssets }
+    if command == "REFRESHCHATASSETS" {
+      let payload = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
+      return .reloadAssets(payload?["cacheKey"] as? String ?? (payload?["cacheKey"] as? NSNumber)?.stringValue)
+    }
     let value = try JSONSerialization.jsonObject(with: Data(body.utf8), options: .fragmentsAllowed)
     let payload = value as? [String: Any] ?? [:]
     switch command {

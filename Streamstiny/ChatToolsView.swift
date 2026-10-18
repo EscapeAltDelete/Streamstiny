@@ -165,25 +165,15 @@ struct ChatEmotePicker: View {
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     NavigationStack {
-      ScrollView {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 90))]) {
-          ForEach(emotes.catalog.keys.filter { emotes.canUse($0, user: account) && (search.isEmpty || $0.localizedCaseInsensitiveContains(search)) }.sorted {
-            if emotes.favorites.contains($0) != emotes.favorites.contains($1) { return emotes.favorites.contains($0) }
-            return $0 < $1
-          }, id: \.self) { name in
-            Button { insert(name); dismiss() } label: {
-              VStack {
-                if let image = emotes.image(for: name) {
-                  Image(uiImage: image.images?.first ?? image).resizable().scaledToFit().frame(height: 36)
-                } else { Image(systemName: "face.smiling").frame(height: 36) }
-                Text((emotes.favorites.contains(name) ? "★ " : "") + name).font(.caption).lineLimit(1)
-              }.frame(height: 65)
-            }.contextMenu { Button(emotes.favorites.contains(name) ? "Remove favorite" : "Favorite") { emotes.favorite(name) } }
-          }
-        }.padding()
-      }.searchable(text: $search).navigationTitle("Emotes").navigationBarTitleDisplayMode(.inline)
+      VStack(spacing: 0) {
+        if let status = emotes.status { Text(status).font(.caption).foregroundStyle(.secondary).padding(8) }
+        ChatAssetView(emotes: emotes, mode: "picker", account: account, search: search,
+          onInsert: { name in insert(name); dismiss() }, favorites: emotes.favorites, revision: emotes.revision)
+      }
+        .searchable(text: $search).navigationTitle("Emotes").navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
     }
+    .task { await emotes.load() }
   }
 }
 

@@ -93,6 +93,7 @@ struct ChatUserProfileView: View {
   @State private var fetched: ChatUser?
   @State private var failure: String?
   @State private var changedTag = false
+  @State private var badgeHeight: CGFloat = 44
   var body: some View {
     let user = fetched ?? initial
     NavigationStack {
@@ -106,17 +107,11 @@ struct ChatUserProfileView: View {
           if let watching = user.watching {
             Button("Watching: " + watching.title) { chat.requestedSource = watching; dismiss() }
           }
-          ForEach(emotes.flairs.filter { user.features.contains($0.name) }, id: \.name) { flair in
-            HStack {
-              if !flair.hidden, let image = emotes.image(for: "flair:" + flair.name) {
-                Image(uiImage: image).resizable().scaledToFit().frame(width: 24, height: 24)
-              }
-              VStack(alignment: .leading) {
-                Text(flair.label)
-                if let description = flair.description { Text(description).font(.caption).foregroundStyle(.secondary) }
-              }
-            }
-          }
+          ChatAssetView(emotes: emotes, mode: "badges", account: user,
+            onHeight: { value in if abs(badgeHeight - value) > 1 { badgeHeight = value } },
+            favorites: emotes.favorites, revision: emotes.revision)
+            .frame(height: badgeHeight)
+
         }
         Section("Personal tag") {
           Picker("Color", selection: Binding(get: { chat.tagColors[user.id] ?? "none" }, set: { color in

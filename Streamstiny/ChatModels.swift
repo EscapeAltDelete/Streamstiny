@@ -10,22 +10,20 @@ struct ChatUser: Identifiable, Equatable, Sendable {
   let age: String?
   let gender: String?
   let watching: StreamSource?
+  let patreonMember: Bool
+  let tier: Int
   var id: String { nick.lowercased() }
   var moderator: Bool { roles.contains("ADMIN") || roles.contains("MODERATOR") }
   var canRemoveEvents: Bool { moderator || roles.contains("EVENTS") }
   var canPoll: Bool { moderator || roles.contains("POLLS") }
   var privileged: Bool { moderator || roles.contains("PROTECTED") }
-  var tier: Int {
-    for (index, flair) in ["flair13", "flair1", "flair3", "flair8", "flair42"].enumerated().reversed() {
-      if features.contains(flair) { return index + 1 }
-    }
-    return 0
-  }
   init(_ payload: [String: Any]) {
     userID = payload["id"] as? Int ?? payload["userId"] as? Int
     nick = payload["nick"] as? String ?? payload["username"] as? String ?? ""
     features = payload["features"] as? [String] ?? []
     roles = payload["roles"] as? [String] ?? []
+    patreonMember = payload["patreonMember"] as? Bool ?? false
+    tier = max(0, (payload["subscription"] as? [String: Any])?["tier"] as? Int ?? 0)
     bio = payload["bio"] as? String
     created = payload["createdDate"] as? String
     age = payload["age"] as? String

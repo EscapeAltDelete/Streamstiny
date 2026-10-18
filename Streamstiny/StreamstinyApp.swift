@@ -126,7 +126,13 @@ struct ContentView: View {
     ) { _ in
       emotes.releaseMemory()
     }
-    .onChange(of: chat.assetRevision) { _, _ in Task { await emotes.load(force: true) } }
+    .onChange(of: chat.assetRevision) { _, _ in Task { await emotes.load(force: true, cacheKey: chat.assetCacheKey) } }
+    .onChange(of: chat.connected) { _, connected in
+      if connected {
+        emotes.recoverAssets()
+        Task { await emotes.load(force: emotes.status != nil) }
+      }
+    }
     .onChange(of: chat.settingsRevision) { _, _ in emotes.refreshPreferences() }
     .onChange(of: library.selected) { _, source in chat.selectedSource = source }
     .onChange(of: chat.requestedSource) { _, source in

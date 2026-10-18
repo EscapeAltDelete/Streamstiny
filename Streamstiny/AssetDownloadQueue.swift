@@ -16,8 +16,11 @@ struct AssetDownloadQueue<Key: Hashable> {
     guard active.remove(key) != nil else { return [] }
     return startAvailable()
   }
-  mutating func removeAll() {
-    active.removeAll(); pending.removeAll(); queued.removeAll()
+  mutating func remove(_ key: Key) -> [Key] {
+    active.remove(key)
+    queued.remove(key)
+    pending.removeAll { $0 == key }
+    return startAvailable()
   }
   private mutating func startAvailable() -> [Key] {
     let count = min(max(0, limit - active.count), pending.count)

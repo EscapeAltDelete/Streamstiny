@@ -36,6 +36,7 @@ import Observation
   var requestedProfile: ChatUser?
   var dismissedPin = UserDefaults.standard.string(forKey: "dismissedPin")
   private(set) var assetRevision = 0
+  private(set) var assetCacheKey: String?
   private(set) var settingsRevision = 0
   func settingsChanged() { settingsRevision += 1 }
   private var replayingHistory = false
@@ -500,7 +501,11 @@ import Observation
         addWhisper(message, conversation: sent.nick, incoming: false)
         enqueue([message])
       }
-    case .reloadAssets: assetRevision += 1
+    case .reloadAssets(let key):
+      if let key, key != assetCacheKey {
+        assetCacheKey = key
+        assetRevision += 1
+      }
     case .reload: Task { await restart() }
     case .ping, .other: break
     }
