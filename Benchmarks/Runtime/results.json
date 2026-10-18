@@ -1,0 +1,459 @@
+{
+  "before": {
+    "runtime": {
+      "checksum": 96124797,
+      "measurements": {
+        "escape_markup": {
+          "cold_ms": 0.110833,
+          "iterations": 100000,
+          "warm_median_ms": 963.733708,
+          "warm_samples_ms": [
+            917.620959,
+            1136.673125,
+            963.733708,
+            955.390166,
+            1026.9705
+          ]
+        },
+        "escape_plain": {
+          "cold_ms": 0.248833,
+          "iterations": 100000,
+          "warm_median_ms": 956.178416,
+          "warm_samples_ms": [
+            941.523667,
+            956.178416,
+            983.596208,
+            796.993792,
+            1038.222459
+          ]
+        },
+        "message_markup": {
+          "cold_ms": 20.045667,
+          "iterations": 10000,
+          "warm_median_ms": 2579.296875,
+          "warm_samples_ms": [
+            2516.128708,
+            2592.912375,
+            2508.010834,
+            2579.296875,
+            2661.773709
+          ]
+        },
+        "twitch_playlist_0_ranges": {
+          "cold_ms": 10.912,
+          "iterations": 100,
+          "warm_median_ms": 302.224708,
+          "warm_samples_ms": [
+            303.811709,
+            302.224708,
+            274.253042,
+            294.558208,
+            343.532708
+          ]
+        },
+        "twitch_playlist_4_ranges": {
+          "cold_ms": 18.125875,
+          "iterations": 100,
+          "warm_median_ms": 2015.531875,
+          "warm_samples_ms": [
+            1777.037334,
+            2196.981041,
+            2026.06,
+            2015.531875,
+            1979.17225
+          ]
+        },
+        "twitch_playlist_16_ranges": {
+          "cold_ms": 52.491791,
+          "iterations": 100,
+          "warm_median_ms": 6373.268584,
+          "warm_samples_ms": [
+            6795.263,
+            6940.892458,
+            6373.268584,
+            5503.8215,
+            5450.406583
+          ]
+        }
+      }
+    },
+    "phases": {
+      "chat_100_messages_per_second": {
+        "app_resident_bytes": 227311616,
+        "browser_fps": 59.49223190602501,
+        "browser_frames": 315,
+        "browser_max_frame_ms": 45,
+        "browser_p95_frame_ms": 28,
+        "fps": 59.999999999999226,
+        "frames": 319,
+        "max_frame_ms": 16.666666666765195,
+        "p95_frame_ms": 16.666666666765195,
+        "sample_ended_unix": 1792324786.233944,
+        "sample_started_unix": 1792324780.9175792,
+        "swift_refresh_calls": 100,
+        "swift_refresh_median_ms": 7.025458333373535,
+        "swift_refresh_p95_ms": 10.752375000038228,
+        "swift_refresh_total_ms": 745.4190416660822,
+        "total_median_mib": 419.09375,
+        "total_peak_mib": 425.9375,
+        "cpu_percent_one_core": 106.73506386555016,
+        "samples": 15
+      },
+      "cold_picker": {
+        "app_resident_bytes": 169803776,
+        "browser_fps": 49.737161342498986,
+        "browser_frames": 247,
+        "browser_max_frame_ms": 359,
+        "browser_p95_frame_ms": 24,
+        "content_ready_ms": 891.5400000000773,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 1078442,
+        "download_calls_cumulative": 40,
+        "fps": 55.07082152974511,
+        "frames": 325,
+        "http_cache_hits_cumulative": 0,
+        "max_frame_ms": 431.9938749999892,
+        "p95_frame_ms": 16.666666666765195,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 450.12066666663486,
+        "sample_ended_unix": 1792324766.561156,
+        "sample_started_unix": 1792324760.660644,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 441.6875,
+        "total_peak_mib": 448.4375,
+        "cpu_percent_one_core": 90.63213972640405,
+        "samples": 15
+      },
+      "hidden_chat": {
+        "app_resident_bytes": 331808768,
+        "fps": 59.999999999999574,
+        "frames": 321,
+        "max_frame_ms": 16.666666666765195,
+        "p95_frame_ms": 16.666666666765195,
+        "sample_ended_unix": 1792324803.446124,
+        "sample_started_unix": 1792324798.1085958,
+        "total_median_mib": 611.578125,
+        "total_peak_mib": 611.609375,
+        "cpu_percent_one_core": 3.0098591936735897,
+        "samples": 15
+      },
+      "retained_plain_history": {
+        "app_resident_bytes": 331694080,
+        "browser_fps": 17.78907242693774,
+        "browser_frames": 99,
+        "browser_max_frame_ms": 105,
+        "browser_p95_frame_ms": 77,
+        "fps": 25.76121537906775,
+        "frames": 143,
+        "max_frame_ms": 76.95108333325607,
+        "p95_frame_ms": 60.46091666667053,
+        "sample_ended_unix": 1792324796.028071,
+        "sample_started_unix": 1792324790.4447699,
+        "swift_refresh_calls": 170,
+        "swift_refresh_median_ms": 28.777666666655932,
+        "swift_refresh_p95_ms": 39.70441666660918,
+        "swift_refresh_total_ms": 3324.8364583330385,
+        "total_median_mib": 618.4375,
+        "total_peak_mib": 623.921875,
+        "cpu_percent_one_core": 147.48256683741693,
+        "samples": 15
+      },
+      "scroll_picker": {
+        "app_resident_bytes": 201359360,
+        "browser_fps": 56.89758434817329,
+        "browser_frames": 286,
+        "browser_max_frame_ms": 85,
+        "browser_p95_frame_ms": 19,
+        "content_ready_ms": 599.9468750000005,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 8507255,
+        "download_calls_cumulative": 357,
+        "fps": 55.71428571428549,
+        "frames": 313,
+        "http_cache_hits_cumulative": 70,
+        "max_frame_ms": 363.30625000005057,
+        "p95_frame_ms": 16.666666666765195,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 373.88045833336037,
+        "sample_ended_unix": 1792324778.536552,
+        "sample_started_unix": 1792324772.9214869,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 475.25,
+        "total_peak_mib": 503.125,
+        "cpu_percent_one_core": 92.67553936392157,
+        "samples": 15
+      },
+      "warm_picker": {
+        "app_resident_bytes": 176750592,
+        "browser_fps": 58.37512537612839,
+        "browser_frames": 292,
+        "browser_max_frame_ms": 91,
+        "browser_p95_frame_ms": 24,
+        "content_ready_ms": 604.7426249999717,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 1078442,
+        "download_calls_cumulative": 75,
+        "fps": 55.550588274384275,
+        "frames": 311,
+        "http_cache_hits_cumulative": 35,
+        "max_frame_ms": 359.23495833333163,
+        "p95_frame_ms": 16.666666666765195,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 377.0022500000323,
+        "sample_ended_unix": 1792324772.5675411,
+        "sample_started_unix": 1792324766.955657,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 448.9921875,
+        "total_peak_mib": 454.375,
+        "cpu_percent_one_core": 103.14972183352052,
+        "samples": 14
+      }
+    },
+    "metadata_seconds": 0.7536622083332531
+  },
+  "after": {
+    "runtime": {
+      "checksum": 96124797,
+      "measurements": {
+        "escape_markup": {
+          "cold_ms": 0.024334,
+          "iterations": 100000,
+          "warm_median_ms": 62.584166,
+          "warm_samples_ms": [
+            64.536125,
+            63.222292,
+            62.584166,
+            54.829458,
+            54.595792
+          ]
+        },
+        "escape_plain": {
+          "cold_ms": 0.042958,
+          "iterations": 100000,
+          "warm_median_ms": 16.781083,
+          "warm_samples_ms": [
+            14.677458,
+            16.781083,
+            15.656292,
+            18.046916,
+            18.3515
+          ]
+        },
+        "message_markup": {
+          "cold_ms": 15.882666,
+          "iterations": 10000,
+          "warm_median_ms": 1253.571792,
+          "warm_samples_ms": [
+            1105.436708,
+            1208.893375,
+            1282.228333,
+            1292.6540420000001,
+            1253.571792
+          ]
+        },
+        "twitch_playlist_0_ranges": {
+          "cold_ms": 4.046542,
+          "iterations": 100,
+          "warm_median_ms": 238.3215,
+          "warm_samples_ms": [
+            238.3215,
+            224.472375,
+            277.294083,
+            224.317708,
+            395.513042
+          ]
+        },
+        "twitch_playlist_4_ranges": {
+          "cold_ms": 2.4195,
+          "iterations": 100,
+          "warm_median_ms": 283.136625,
+          "warm_samples_ms": [
+            260.2985,
+            283.46875,
+            268.817417,
+            283.136625,
+            310.658084
+          ]
+        },
+        "twitch_playlist_16_ranges": {
+          "cold_ms": 3.992416,
+          "iterations": 100,
+          "warm_median_ms": 438.487875,
+          "warm_samples_ms": [
+            483.212667,
+            438.487875,
+            426.906083,
+            517.1625,
+            392.587708
+          ]
+        }
+      }
+    },
+    "phases": {
+      "chat_100_messages_per_second": {
+        "app_resident_bytes": 205946880,
+        "browser_fps": 59.447179098826204,
+        "browser_frames": 315,
+        "browser_max_frame_ms": 37,
+        "browser_p95_frame_ms": 25,
+        "fps": 60.00000000000034,
+        "frames": 318,
+        "max_frame_ms": 16.666666666708352,
+        "p95_frame_ms": 16.666666666708352,
+        "sample_ended_unix": 1792324590.230608,
+        "sample_started_unix": 1792324584.9262,
+        "swift_refresh_calls": 100,
+        "swift_refresh_median_ms": 2.720916666703488,
+        "swift_refresh_p95_ms": 4.924333333349296,
+        "swift_refresh_total_ms": 319.8215416669541,
+        "total_median_mib": 402.921875,
+        "total_peak_mib": 406.75,
+        "cpu_percent_one_core": 101.50273733753738,
+        "samples": 13
+      },
+      "cold_picker": {
+        "app_resident_bytes": 166281216,
+        "browser_fps": 50.826946349334406,
+        "browser_frames": 253,
+        "browser_max_frame_ms": 208,
+        "browser_p95_frame_ms": 25,
+        "content_ready_ms": 1330.9905416666652,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 1078714,
+        "download_calls_cumulative": 40,
+        "fps": 53.95704396413976,
+        "frames": 341,
+        "http_cache_hits_cumulative": 0,
+        "max_frame_ms": 564.1292083333269,
+        "p95_frame_ms": 16.666666666708352,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 607.9361249999806,
+        "sample_ended_unix": 1792324570.596394,
+        "sample_started_unix": 1792324564.251607,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 433.328125,
+        "total_peak_mib": 441.96875,
+        "cpu_percent_one_core": 85.70393256286651,
+        "samples": 15
+      },
+      "hidden_chat": {
+        "app_resident_bytes": 266436608,
+        "fps": 60.00000000000004,
+        "frames": 320,
+        "max_frame_ms": 16.666666666708352,
+        "p95_frame_ms": 16.666666666708352,
+        "sample_ended_unix": 1792324607.25403,
+        "sample_started_unix": 1792324601.916004,
+        "total_median_mib": 577.046875,
+        "total_peak_mib": 638.34375,
+        "cpu_percent_one_core": 4.105633805574241,
+        "samples": 14
+      },
+      "retained_plain_history": {
+        "app_resident_bytes": 278822912,
+        "browser_fps": 28.104335047759,
+        "browser_frames": 154,
+        "browser_max_frame_ms": 68,
+        "browser_p95_frame_ms": 59,
+        "fps": 56.87116564417174,
+        "frames": 310,
+        "max_frame_ms": 38.475208333352384,
+        "p95_frame_ms": 33.539708333364615,
+        "sample_ended_unix": 1792324599.871537,
+        "sample_started_unix": 1792324594.397301,
+        "swift_refresh_calls": 101,
+        "swift_refresh_median_ms": 10.951833333365357,
+        "swift_refresh_p95_ms": 15.962791666709109,
+        "swift_refresh_total_ms": 1151.2680416666967,
+        "total_median_mib": 547.828125,
+        "total_peak_mib": 556.46875,
+        "cpu_percent_one_core": 120.02028317991518,
+        "samples": 14
+      },
+      "scroll_picker": {
+        "app_resident_bytes": 192905216,
+        "browser_fps": 57.28542914171657,
+        "browser_frames": 288,
+        "browser_max_frame_ms": 76,
+        "browser_p95_frame_ms": 22,
+        "content_ready_ms": 561.3412083333742,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 8726069,
+        "download_calls_cumulative": 367,
+        "fps": 55.68862275449106,
+        "frames": 311,
+        "http_cache_hits_cumulative": 70,
+        "max_frame_ms": 350.63433333334615,
+        "p95_frame_ms": 16.666666666708352,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 346.3518333333582,
+        "sample_ended_unix": 1792324582.552696,
+        "sample_started_unix": 1792324576.978222,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 461.484375,
+        "total_peak_mib": 492.984375,
+        "cpu_percent_one_core": 91.79079407506204,
+        "samples": 14
+      },
+      "warm_picker": {
+        "app_resident_bytes": 172818432,
+        "browser_fps": 59.45399393326593,
+        "browser_frames": 295,
+        "browser_max_frame_ms": 57,
+        "browser_p95_frame_ms": 22,
+        "content_ready_ms": 559.1641249999952,
+        "deduplicated_cumulative": 0,
+        "download_bytes_cumulative": 1078714,
+        "download_calls_cumulative": 75,
+        "fps": 59.99687708562877,
+        "frames": 313,
+        "http_cache_hits_cumulative": 35,
+        "max_frame_ms": 16.93733333331693,
+        "p95_frame_ms": 16.666666666708352,
+        "picker_height": 600,
+        "picker_width": 541,
+        "presentation_to_first_callback_ms": 376.99304166665115,
+        "sample_ended_unix": 1792324576.61975,
+        "sample_started_unix": 1792324571.045347,
+        "swift_refresh_calls": 0,
+        "swift_refresh_median_ms": 0,
+        "swift_refresh_p95_ms": 0,
+        "swift_refresh_total_ms": 0,
+        "total_median_mib": 446.0625,
+        "total_peak_mib": 451.96875,
+        "cpu_percent_one_core": 91.74365164214949,
+        "samples": 14
+      }
+    },
+    "metadata_seconds": 0.7658287499999687
+  },
+  "verification": {
+    "baseline": "185e4ae66e78a85fb9c4b2fd2cb9fedfef2e5b39",
+    "optimized": "ccf5b4016085d65c829b1000ba0ce2173458003a",
+    "workflow_run": 39125094686,
+    "platform": "Mac Catalyst, macos-15, Xcode 16.4",
+    "native_cases_each_version": 3,
+    "asset_decode_success_each_version": 343,
+    "asset_decode_total": 347
+  }
+}

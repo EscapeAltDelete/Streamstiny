@@ -89,7 +89,7 @@ not confidence intervals or physical-iPhone results.
 | Warm presentation to first app callback | 514 ms | 404 ms |
 | Picker scrolling FPS | 32.4 app | 56.9 browser |
 | Chat at target 100 messages/s, FPS | 16.2 app | 59.2 browser |
-| Metadata discovery/loading | 2.45 s | 2.72 s |
+| Metadata phase, including 2 s settling | 2.45 s | 2.72 s |
 | Total cold picker median RSS | 176 MiB | 446 MiB |
 | Total warm picker median RSS | 183 MiB | 458 MiB |
 | Total scrolling median / peak RSS | 190 / 209 MiB | 476 / 499 MiB |
@@ -157,3 +157,8 @@ Unverified: physical iPhone/iPad memory pressure, iOS 17 runtime decoding, hours
 long sessions, every contextual hover/combo pseudo-element pixel sequence, and
 authenticated production moderation/subscription interactions. No claim of
 universal 60 FPS, complete Apple-format support, or lower total memory is made.
+
+The metadata phase above included the harness's two-second settling delay; the
+current harness times retrieval separately and clears metadata snapshots for both
+cold runs. See the [runtime follow-up](../Runtime/README.md) for the subsequent
+cache/formatting/playlist optimizations and new measurements.
