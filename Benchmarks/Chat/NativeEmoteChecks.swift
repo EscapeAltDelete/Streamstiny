@@ -30,12 +30,13 @@ import ImageIO
     defaults.set(1, forKey: "removedChatMessages")
     defer { defaults.set(previous, forKey: "removedChatMessages") }
     let emotes = EmoteStore()
+    let chat = ChatStore()
     var removed = ChatMessage(payload: ["uuid": "removed-row", "nick": "Benchmark", "data": "Deleted text"])
     removed.removed = true
     let other = ChatMessage(payload: ["uuid": "stable-row", "nick": "Benchmark", "data": "Unchanged text"])
     func list(_ messages: [ChatMessage]) -> ChatList {
       ChatList(messages: messages, emotes: emotes, fontSize: 16, timestamps: false,
-        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in })
+        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in }, chat: chat)
     }
     let coordinator = list([removed, other]).makeCoordinator()
     let web = coordinator.makeWebView()
@@ -69,6 +70,28 @@ import ImageIO
       XCTAssertTrue(stable)
       XCTAssertFalse(coordinator.actions(["id": removed.id]).isEmpty)
     }
+    let oldTags = defaults.object(forKey: "chatTags"), oldColors = defaults.object(forKey: "chatTagColors")
+    defer { defaults.set(oldTags, forKey: "chatTags"); defaults.set(oldColors, forKey: "chatTagColors") }
+    chat.tag("Benchmark", text: "Cache invalidation")
+    coordinator.refresh()
+    var tagged = false
+    for _ in 0..<100 {
+      tagged = try await javascript(web, "return document.querySelector('[data-message=stable-row] .tag')?.textContent==='[Cache invalidation]';")
+      if tagged { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(tagged, "Tag changes must invalidate unchanged messages even with the default revision argument")
+    let oldWords = defaults.object(forKey: "censoredChatWords"), oldCensor = defaults.object(forKey: "censorChatWords")
+    defer { defaults.set(oldWords, forKey: "censoredChatWords"); defaults.set(oldCensor, forKey: "censorChatWords") }
+    defaults.set("Unchanged", forKey: "censoredChatWords"); defaults.set(true, forKey: "censorChatWords")
+    coordinator.refresh()
+    var censored = false
+    for _ in 0..<100 {
+      censored = try await javascript(web, "return document.querySelector('[data-message=stable-row] .text')?.textContent==='••••••••• text';")
+      if censored { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(censored, "Text-rule changes must invalidate unchanged messages")
     coordinator.parent = list([]); coordinator.refresh()
     for _ in 0..<100 {
       let count: Int = try await javascript(web, "return document.querySelectorAll('[data-message]').length;")
