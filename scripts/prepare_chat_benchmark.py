@@ -21,6 +21,10 @@ for path in names:
         # Hold the catalog source constant when measuring the legacy decoder.
         text = text.replace('"https://cdn.destiny.gg/" + path', '"https://r2cdn.destiny.gg/" + path')
         text = text.replace("let (data, response) = try await session.data(from: url)", "ChatBenchmarkMetrics.requests += 1\n        let (data, response) = try await session.data(from: url)\n        ChatBenchmarkMetrics.bytes += data.count")
+    if path.name == "ChatList.swift" and "ChatWebCoordinator" in text:
+        text = text.replace("      guard ready else { return }", """      guard ready else { return }
+      let refreshStarted = ProcessInfo.processInfo.systemUptime
+      defer { ChatBenchmarkMetrics.refreshTimes.append((ProcessInfo.processInfo.systemUptime - refreshStarted) * 1000) }""", 1)
     (source / path.name).write_text(text)
 host = Path("Benchmarks/Chat/Host.swift").read_text()
 if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():

@@ -9,6 +9,7 @@ enum TwitchResolver { static let userAgent = PlaybackResolver.userAgent }
 @MainActor enum ChatBenchmarkMetrics {
   static var requests = 0
   static var bytes = 0
+  static var refreshTimes: [Double] = []
 }
 
 @main struct ChatBenchmarkApp: App {

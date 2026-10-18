@@ -38,6 +38,12 @@ import WebKit
       }
     }
   }
+  func refreshMetrics() -> [String: Double] {
+    let times = ChatBenchmarkMetrics.refreshTimes.sorted()
+    return ["swift_refresh_calls": Double(times.count), "swift_refresh_total_ms": times.reduce(0, +),
+      "swift_refresh_median_ms": times.isEmpty ? 0 : times[times.count / 2],
+      "swift_refresh_p95_ms": times.isEmpty ? 0 : times[min(times.count - 1, Int(Double(times.count) * 0.95))]]
+  }
   func residentBytes() -> Double {
     var info = mach_task_basic_info()
     var size = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
@@ -77,6 +83,7 @@ import WebKit
       "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
       "note": "App RSS excludes any WebKit content/network subprocesses; frame intervals use CADisplayLink, not instrumented GPU presentations."]
     for phase in ["cold_picker", "warm_picker", "scroll_picker"] {
+      ChatBenchmarkMetrics.refreshTimes = []
       let sampleStart = Date().timeIntervalSince1970
       let monitor = Frames(); monitor.start()
       let started = CACurrentMediaTime()
@@ -119,6 +126,7 @@ import WebKit
       metrics["download_calls_cumulative"] = Double(ChatBenchmarkMetrics.requests)
       metrics["download_bytes_cumulative"] = Double(ChatBenchmarkMetrics.bytes)
       for (key, value) in await emotes.benchmarkMetrics() { metrics[key] = value }
+      for (key, value) in refreshMetrics() { metrics[key] = value }
       results[phase] = metrics
       snapshot(window, name: phase)
       background.dismiss(animated: false)
@@ -135,6 +143,7 @@ import WebKit
     let monitor = Frames(); monitor.start()
     let web = findWeb(timeline.view)
     if let web { try await startBrowserFrames(web) }
+    ChatBenchmarkMetrics.refreshTimes = []
     let loadStartUnix = Date().timeIntervalSince1970
     for index in 0..<100 {
       feed.messages = Array((feed.messages + (0..<5).map { message(1000 + index * 5 + $0) }).suffix(1000))
@@ -144,10 +153,32 @@ import WebKit
     if let web { for (key, value) in try await browserFrames(web) { metrics[key] = value } }
     metrics["sample_started_unix"] = loadStartUnix
     metrics["sample_ended_unix"] = Date().timeIntervalSince1970
+    for (key, value) in refreshMetrics() { metrics[key] = value }
     results["chat_100_messages_per_second"] = metrics
     snapshot(window, name: "chat-load")
     feed.messages = words.enumerated().map { ChatMessage(payload: ["nick": "Benchmark", "data": $0.element, "timestamp": Double(1700000100000 + $0.offset), "features": ["flair127"]]) }
     for index in 0..<4 { try await Task.sleep(for: .milliseconds(230)); snapshot(window, name: "named-emotes-\(index)") }
+    func plain(_ index: Int) -> ChatMessage {
+      ChatMessage(payload: ["nick": "Benchmark", "data": "Retained plain message \(index)", "timestamp": Double(1700000000000 + index)])
+    }
+    feed.messages = (0..<5000).map(plain)
+    try await Task.sleep(for: .seconds(3))
+    let historyStart = Date().timeIntervalSince1970
+    let historyFrames = Frames(); historyFrames.start()
+    let historyWeb = findWeb(timeline.view)
+    if let historyWeb { try await startBrowserFrames(historyWeb) }
+    ChatBenchmarkMetrics.refreshTimes = []
+    for index in 0..<100 {
+      feed.messages = Array((feed.messages + (0..<5).map { plain(5000 + index * 5 + $0) }).suffix(5000))
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    var history = historyFrames.stop()
+    for (key, value) in refreshMetrics() { history[key] = value }
+    if let historyWeb { for (key, value) in try await browserFrames(historyWeb) { history[key] = value } }
+    history["sample_started_unix"] = historyStart
+    history["sample_ended_unix"] = Date().timeIntervalSince1970
+    history["app_resident_bytes"] = residentBytes()
+    results["retained_plain_history"] = history
     // Model production hiding: remove the renderer while retaining the feed/store.
     feed.visible = false
     try await Task.sleep(for: .seconds(2))
