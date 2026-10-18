@@ -1,0 +1,85 @@
+import XCTest
+import SwiftUI
+import WebKit
+import CryptoKit
+@testable import ChatBenchmark
+
+@MainActor extension ChatBenchmarkTests {
+  func findWeb(_ view: UIView) -> WKWebView? {
+    if let web = view as? WKWebView { return web }
+    return view.subviews.lazy.compactMap { self.findWeb($0) }.first
+  }
+  func waitForRenderer(_ web: WKWebView) async throws {
+    for _ in 0..<200 {
+      if (try? await web.evaluateJavaScript("Boolean(window.ChatRenderer && document.querySelector('.msg-chat'))")) as? Bool == true { return }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTFail("Chat renderer never produced message content")
+    throw URLError(.timedOut)
+  }
+  func testNativeEmoteRendering() async throws {
+    let emotes = EmoteStore()
+    await emotes.load(force: true)
+    guard let styles = emotes.benchmarkStyles else { throw XCTSkip("Legacy UIKit decoder: known format failures recorded by baseline screenshots") }
+    let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
+    let names = ["Listening", "pepeW", "PepoPunch"]
+    let feed = Feed()
+    feed.messages = names.enumerated().map { index, name in
+      ChatMessage(payload: ["nick": "Benchmark", "data": name, "timestamp": Double(1700000000000 + index),
+        "features": ["flair127", "flair18", "flair13"], "roles": ["PROTECTED"]])
+    }
+    let controller = UIHostingController(rootView: Timeline(feed: feed, emotes: emotes))
+    window.rootViewController = controller; window.makeKeyAndVisible(); controller.view.layoutIfNeeded()
+    let web = try XCTUnwrap(findWeb(controller.view))
+    try await waitForRenderer(web)
+    try await Task.sleep(for: .seconds(2))
+    var results: [String: Any] = [:]
+    for name in ["Listening", "pepeW"] {
+      let bounds = try await web.callAsyncJavaScript("const node=document.querySelector('.emote.'+name);const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};", arguments: ["name": name], in: nil, in: .page) as! [String: Double]
+      XCTAssertGreaterThanOrEqual(bounds["y"]!, 0, "Full emote must fit within the viewport")
+      let capture = WKSnapshotConfiguration()
+      capture.rect = CGRect(x: bounds["x"]!, y: bounds["y"]!, width: bounds["width"]!, height: bounds["height"]!)
+      var hashes = Set<String>()
+      for index in 0..<8 {
+        let image = try await web.takeSnapshot(with: capture)
+        let data = try XCTUnwrap(image.pngData())
+        hashes.insert(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+        if index == 0 { let attachment = XCTAttachment(image: image); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
+        try await Task.sleep(for: .milliseconds(150))
+      }
+      XCTAssertGreaterThan(hashes.count, 1, "\(name) must display changing pixels through the actual WKURLSchemeHandler")
+      results[name] = ["distinct_frame_hashes": hashes.count, "bounds": bounds]
+    }
+    let reference = WKWebView(frame: CGRect(x: -4000, y: 0, width: web.bounds.width, height: web.bounds.height))
+    controller.view.addSubview(reference)
+    defer { reference.stopLoading(); reference.removeFromSuperview() }
+    reference.loadHTMLString("<style>.emote{display:inline-block;position:relative;overflow:hidden;text-indent:-999em} "
+      + styles.replacingOccurrences(of: "dgg-asset:", with: "https:")
+      + "</style><div class='msg-chat msg-user'><span class='text'><div class='emote PepoPunch'>PepoPunch </div></span></div>", baseURL: URL(string: "https://www.destiny.gg"))
+    for _ in 0..<100 {
+      if (try? await reference.evaluateJavaScript("Boolean(document.querySelector('.PepoPunch'))")) as? Bool == true { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let sample = "document.getAnimations().forEach(a=>{a.pause();a.currentTime=time});const c=getComputedStyle(document.querySelector('.PepoPunch'));return [c.backgroundPosition,c.transform,c.width,c.animationDuration,c.animationTimingFunction,c.animationIterationCount,c.animationDelay];"
+    var samples: [[String: Any]] = []
+    for time in [0, 125, 375, 875, 1100, 2750, 4500] {
+      let actual = try await web.callAsyncJavaScript(sample, arguments: ["time": time], in: nil, in: .page) as! [String]
+      let expected = try await reference.callAsyncJavaScript(sample, arguments: ["time": time], in: nil, in: .page) as! [String]
+      XCTAssertEqual(actual, expected, "PepoPunch must match native CSS at \(time) ms")
+      samples.append(["time_ms": time, "actual": actual])
+    }
+    results["PepoPunch"] = samples
+    let badges = try await web.evaluateJavaScript("(() => {const row=document.querySelector('.msg-chat');const a=row.querySelector('.flair18').getBoundingClientRect();const b=row.querySelector('.flair127').getBoundingClientRect();return {master_x:a.x,new_badge_x:b.x,new_badge_width:b.width,new_badge_height:b.height,hidden_count:row.querySelectorAll('.flair13').length};})()") as! [String: Double]
+    XCTAssertLessThan(badges["master_x"]!, badges["new_badge_x"]!)
+    XCTAssertEqual(badges["new_badge_width"], 18); XCTAssertEqual(badges["new_badge_height"], 18)
+    XCTAssertEqual(badges["hidden_count"], 0)
+    results["badges"] = badges
+    let catalog = emotes.catalog.map { ["name": $0.key, "url": $0.value.absoluteString.replacingOccurrences(of: "https:", with: "dgg-asset:")] }
+    let decode = "let next=0,success=0,errors=[];await Promise.all(Array.from({length:4},async()=>{while(next<catalog.length){const item=catalog[next++],image=new Image();try{image.src=item.url;await image.decode();if(!image.naturalWidth||!image.naturalHeight)throw Error('Empty image');success++}catch(e){errors.push({name:item.name,url:item.url,error:String(e)})}}}));return {success,errors};"
+    let audit = try await web.callAsyncJavaScript(decode, arguments: ["catalog": catalog], in: nil, in: .page) as! [String: Any]
+    XCTAssertEqual((audit["errors"] as? [Any])?.count, 0, "Every current catalog format must decode through the production transport: \(audit)")
+    results["full_catalog"] = audit
+    snapshot(window, name: "native-emote-validation")
+    print("CHAT_NATIVE_VALIDATION " + String(decoding: try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys]), as: UTF8.self))
+  }
+}

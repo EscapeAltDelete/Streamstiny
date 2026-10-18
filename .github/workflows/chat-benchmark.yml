@@ -78,6 +78,7 @@ jobs:
           ps -eo pid,ppid,rss,%cpu,command > build/chat-artifacts/processes.txt
           cp build/chat-benchmark.log build/chat-artifacts/ 2>/dev/null || true
           cp build/chat-processes.jsonl build/chat-artifacts/ 2>/dev/null || true
+          xcrun xcresulttool export attachments --path build/chat-results.xcresult --output-path build/chat-artifacts/attachments 2>/dev/null || true
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:

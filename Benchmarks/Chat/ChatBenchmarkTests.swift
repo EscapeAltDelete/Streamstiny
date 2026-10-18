@@ -64,12 +64,15 @@ import WebKit
       "viewport_width": window.bounds.width, "viewport_height": window.bounds.height,
       "note": "App RSS excludes any WebKit content/network subprocesses; frame intervals use CADisplayLink, not instrumented GPU presentations."]
     for phase in ["cold_picker", "warm_picker", "scroll_picker"] {
+      let sampleStart = Date().timeIntervalSince1970
       let monitor = Frames(); monitor.start()
       let started = CACurrentMediaTime()
       let controller = UIHostingController(rootView: ChatEmotePicker(emotes: emotes, account: user, insert: { _ in }))
       window.rootViewController = controller
+      window.makeKeyAndVisible()
       controller.view.layoutIfNeeded()
-      while monitor.times.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+      while monitor.times.isEmpty && CACurrentMediaTime() - started < 3 { try await Task.sleep(for: .milliseconds(5)) }
+      XCTAssertFalse(monitor.times.isEmpty, "Display callbacks must be available for a valid measurement")
       let first = CACurrentMediaTime() - started
       try await Task.sleep(for: .seconds(2))
       if phase == "scroll_picker", let scroll = findScroll(controller.view) {
@@ -77,7 +80,8 @@ import WebKit
       }
       try await Task.sleep(for: .seconds(3))
       var metrics = monitor.stop()
-      metrics["sample_started_unix"] = Date().timeIntervalSince1970 - 5
+      metrics["sample_started_unix"] = sampleStart
+      metrics["sample_ended_unix"] = Date().timeIntervalSince1970
       metrics["presentation_to_first_callback_ms"] = first * 1000
       metrics["app_resident_bytes"] = residentBytes()
       metrics["download_calls_cumulative"] = Double(ChatBenchmarkMetrics.requests)
@@ -97,11 +101,14 @@ import WebKit
     window.rootViewController = UIHostingController(rootView: Timeline(feed: feed, emotes: emotes))
     try await Task.sleep(for: .seconds(2))
     let monitor = Frames(); monitor.start()
+    let loadStartUnix = Date().timeIntervalSince1970
     for index in 0..<100 {
       feed.messages = Array((feed.messages + (0..<5).map { message(1000 + index * 5 + $0) }).suffix(1000))
       try await Task.sleep(for: .milliseconds(50))
     }
     var metrics = monitor.stop(); metrics["app_resident_bytes"] = residentBytes()
+    metrics["sample_started_unix"] = loadStartUnix
+    metrics["sample_ended_unix"] = Date().timeIntervalSince1970
     results["chat_100_messages_per_second"] = metrics
     snapshot(window, name: "chat-load")
     feed.messages = words.enumerated().map { ChatMessage(payload: ["nick": "Benchmark", "data": $0.element, "timestamp": Double(1700000100000 + $0.offset), "features": ["flair127"]]) }

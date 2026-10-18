@@ -23,17 +23,20 @@ if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():
     return ["download_calls_cumulative": Double(value.requests), "download_bytes_cumulative": Double(value.bytes),
       "http_cache_hits_cumulative": Double(value.cacheHits), "deduplicated_cumulative": Double(value.deduplicated)]
   }
+  var benchmarkStyles: String? { stylesheet }
 }\n'''
 else:
     host += '''\n@MainActor extension EmoteStore {
   func benchmarkMetrics() async -> [String: Double] {
     ["download_calls_cumulative": Double(ChatBenchmarkMetrics.requests), "download_bytes_cumulative": Double(ChatBenchmarkMetrics.bytes)]
   }
+  var benchmarkStyles: String? { nil }
 }\n'''
 (source / "Host.swift").write_text(host)
 for path in Path("Streamstiny").glob("Chat*.js"):
     shutil.copy(path, source)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
+shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)
 (root / "project.yml").write_text("""name: ChatBenchmark
 options:
   deploymentTarget:
@@ -59,7 +62,7 @@ targets:
   ChatBenchmarkTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [ChatBenchmarkTests.swift]
+    sources: [ChatBenchmarkTests.swift, NativeEmoteChecks.swift]
     dependencies:
       - target: ChatBenchmark
 schemes:
