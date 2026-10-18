@@ -32,6 +32,18 @@ enum TwitchPlaybackTests {
     precondition(!TwitchAdPlaylist(withTag(#"#EXT-X-DATERANGE:ID="trigger",CLASS="twitch-trigger""#))!.hasAds)
     precondition(!TwitchAdPlaylist(withTag(#"#EXT-X-DATERANGE:ID="other",CLASS="chapter""#))!.hasAds)
 
+    let invalidEnd = range.replacingOccurrences(of: "2026-10-17T10:00:04Z", with: "invalid") + ",DURATION=2"
+    precondition(TwitchAdPlaylist(withTag(invalidEnd))!.segments.map(\.isAd) == [false, true, false])
+    let invalidStart = range.replacingOccurrences(of: "2026-10-17T10:00:02Z", with: "invalid")
+    precondition(TwitchAdPlaylist(withTag(invalidStart))!.segments.allSatisfy(\.isAd), "Unknown ad interval remains conservative")
+    for invalidDuration in ["-2", "nan", "inf"] {
+      let openEnded = duration.replacingOccurrences(of: "DURATION=2", with: "DURATION=" + invalidDuration)
+      precondition(TwitchAdPlaylist(withTag(openEnded))!.segments.map(\.isAd) == [false, true, true])
+    }
+    let future = range.replacingOccurrences(of: "10:00:02", with: "10:01:02").replacingOccurrences(of: "10:00:04", with: "10:01:04")
+    precondition(!TwitchAdPlaylist(withTag(future))!.hasAds)
+    precondition(TwitchAdPlaylist(withTag(future + "\n" + range))!.segments.map(\.isAd) == [false, true, false])
+
     let cue = clean.replacingOccurrences(of: "#EXTINF:2,live\nhttps://cdn.example/101.ts", with: "#EXT-X-CUE-OUT:2\n#EXTINF:2,live\nhttps://cdn.example/101.ts\n#EXT-X-CUE-IN")
     precondition(TwitchAdPlaylist(cue)!.segments.map(\.isAd) == [false, true, false])
     precondition(TwitchAdPlaylist(clean.replacingOccurrences(of: "101.ts", with: "adsquared/101.ts"))!.hasAds)

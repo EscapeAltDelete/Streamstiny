@@ -19,7 +19,6 @@ import OSLog
   @ObservationIgnored private var generation = 0
   @ObservationIgnored private var pendingCacheKey: String?
   @ObservationIgnored private var nextRefresh = Date.distantPast
-  @ObservationIgnored private var listeners: [UUID: (URL, Bool) -> Void] = [:]
 
   init(assets: ChatAssetLoader? = nil) {
     let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
@@ -131,12 +130,5 @@ import OSLog
   func recoverAssets() {
     recoveryRevision += 1
     revision += 1
-  }
-  func observeAssets(_ callback: @escaping (URL, Bool) -> Void) -> UUID {
-    let id = UUID(); listeners[id] = callback; return id
-  }
-  func removeAssetObserver(_ id: UUID) { listeners.removeValue(forKey: id) }
-  func assetFinished(_ url: URL, success: Bool) {
-    for callback in listeners.values { callback(url, success) }
   }
 }

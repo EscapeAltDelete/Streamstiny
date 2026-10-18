@@ -6,7 +6,6 @@ import OSLog
   let emotes: EmoteStore
   weak var webView: WKWebView?
   private var downloads: [ObjectIdentifier: Task<Void, Never>] = [:]
-  private var assetObserver: UUID?
   private var editMenu: UIEditMenuInteraction?
   private var menuRequest: [String: Any] = [:]
   private var sentCatalog = -1
@@ -29,17 +28,12 @@ import OSLog
     let interaction = UIEditMenuInteraction(delegate: self)
     view.addInteraction(interaction); editMenu = interaction
     webView = view
-    assetObserver = emotes.observeAssets { [weak self] url, success in
-      self?.call("assetFinished", arguments: ["url": url.absoluteString, "success": success])
-    }
     loadDocument()
     return view
   }
   func stop() {
     for task in downloads.values { task.cancel() }
     downloads.removeAll()
-    if let assetObserver { emotes.removeAssetObserver(assetObserver) }
-    assetObserver = nil
     webView?.configuration.userContentController.removeScriptMessageHandler(forName: "chat")
     webView?.stopLoading()
     ready = false
@@ -163,11 +157,11 @@ import OSLog
           expectedContentLength: value.data.count, textEncodingName: value.response.textEncodingName))
         urlSchemeTask.didReceive(value.data)
         urlSchemeTask.didFinish()
-        emotes.assetFinished(url, success: true)
+        call("assetFinished", arguments: ["url": url.absoluteString, "success": true])
       } catch {
         guard !Task.isCancelled, downloads[id] != nil else { return }
         urlSchemeTask.didFailWithError(error)
-        emotes.assetFinished(url, success: false)
+        call("assetFinished", arguments: ["url": url.absoluteString, "success": false])
       }
     }
   }

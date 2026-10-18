@@ -26,8 +26,6 @@ struct ChatList: UIViewRepresentable {
 
   @MainActor final class Coordinator: ChatWebCoordinator {
     var parent: ChatList
-    private var records: [String: ChatMessage] = [:]
-    private var rendered: [String: [String: Any]] = [:]
     private var inputs: [String: Input] = [:]
     private var ids: [String] = []
     private var sending = false
@@ -43,10 +41,11 @@ struct ChatList: UIViewRepresentable {
       let highlighted: Bool
       let spotlight: Bool
       let faded: Bool
+      let revealed: Bool
       let options: String
     }
     init(_ parent: ChatList) { self.parent = parent; super.init(emotes: parent.emotes) }
-    override func reset() { records.removeAll(); rendered.removeAll(); inputs.removeAll(); ids = []; sending = false; pending = false }
+    override func reset() { inputs.removeAll(); ids = []; sending = false; pending = false }
     override func refresh() {
       guard ready else { return }
       if sending { pending = true; return }
@@ -59,20 +58,19 @@ struct ChatList: UIViewRepresentable {
       let nextIDs = parent.messages.map(\.id)
       let retained = Set(nextIDs)
       revealed.formIntersection(retained)
+      for id in ids where !retained.contains(id) { inputs.removeValue(forKey: id) }
       for message in parent.messages {
         let user = parent.chat?.users[message.nick.lowercased()] ?? message.user
         let highlighted = parent.chat?.isHighlighted(message, rules: rules) ?? rules.highlighted(message.text)
         let input = Input(message: message, user: user, tag: parent.chat?.tags[user.id], tagColor: parent.chat?.tagColors[user.id],
           highlighted: highlighted, spotlight: parent.chat.map { !$0.spotlights.isEmpty && $0.spotlights[message.spotlightIdentity] != nil } ?? false,
           faded: parent.watchingFocus && message.kind == "MSG" && !message.whisper && !highlighted && parent.chat?.isWatchingSame(message) != true,
-          options: options)
-        if inputs[message.id] != input || rendered[message.id] == nil {
+          revealed: revealed.contains(message.id), options: options)
+        if inputs[message.id] != input {
           let record = render(input, rules: rules)
-          inputs[message.id] = input; rendered[message.id] = record; updates.append(record)
+          inputs[message.id] = input; updates.append(record)
         }
       }
-      records = Dictionary(parent.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
-      rendered = rendered.filter { retained.contains($0.key) }; inputs = inputs.filter { retained.contains($0.key) }
       var payload = commonPayload(mode: "chat")
       payload["records"] = updates
       payload["fontSize"] = UIFontMetrics.default.scaledValue(for: CGFloat(parent.fontSize))
@@ -86,7 +84,7 @@ struct ChatList: UIViewRepresentable {
     }
     private func render(_ input: Input, rules: ChatTextRules) -> [String: Any] {
       let message = input.message, user = input.user
-      let hidden = message.removed && ChatPreferences.removedMessages == 1 && !revealed.contains(message.id)
+      let hidden = message.removed && ChatPreferences.removedMessages == 1 && !input.revealed
       let action = !hidden && message.text.hasPrefix("/me ")
       var body = hidden ? "[message deleted · long press to reveal]" : rules.censored(action ? String(message.text.dropFirst(4)) : message.text)
       let sensitive = rules.sensitive(message.text)
@@ -134,10 +132,10 @@ struct ChatList: UIViewRepresentable {
       if request["action"] as? String == "link", let address = request["url"] as? String,
         let url = URL(string: address), ["https", "http"].contains(url.scheme) { open(url) }
       if request["action"] as? String == "profile", let id = request["id"] as? String,
-        let message = records[id] { parent.chat?.requestedProfile = parent.chat?.users[message.nick.lowercased()] ?? message.user }
+        let message = inputs[id]?.message { parent.chat?.requestedProfile = parent.chat?.users[message.nick.lowercased()] ?? message.user }
     }
     override func actions(_ request: [String: Any]) -> [UIMenuElement] {
-      guard let id = request["id"] as? String, let message = records[id] else { return [] }
+      guard let id = request["id"] as? String, let message = inputs[id]?.message else { return [] }
       return actions(message)
     }
     private func open(_ url: URL) {
@@ -164,7 +162,6 @@ struct ChatList: UIViewRepresentable {
         actions.insert(UIAction(title: revealed.contains(message.id) ? "Hide deleted text" : "Reveal deleted text", image: UIImage(systemName: "eye")) { [weak self] _ in
           guard let self else { return }
           if revealed.contains(message.id) { revealed.remove(message.id) } else { revealed.insert(message.id) }
-          rendered.removeValue(forKey: message.id)
           refresh()
         }, at: 0)
       }

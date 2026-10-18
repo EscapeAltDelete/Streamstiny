@@ -48,6 +48,13 @@ private final class ChatAssetProtocol: URLProtocol, @unchecked Sendable {
 
 enum ChatAssetsTests {
   @MainActor static func run() async throws {
+    let escapedCharacters: [Unicode.Scalar: String] = ["&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"]
+    for scalar in (0...255).compactMap { Unicode.Scalar($0) } + ["👋", "🏽", "é", "́", "中"] {
+      let sample = "café👋🏽" + String(scalar) + "<&\"'>é"
+      let expected = sample.unicodeScalars.map { escapedCharacters[$0] ?? String($0) }.joined()
+      precondition(ChatHTML.escape(sample) == expected, "Escape markup without altering Unicode or double-escaping entities")
+    }
+    precondition(ChatHTML.escape("plain café 👋🏽") == "plain café 👋🏽")
     let html = #"<script data-cdn="https://r2cdn.destiny.gg" data-cache-key="one"></script>"#
     let configuration = try ChatAssetConfiguration.discover(in: html)
     precondition(configuration.base.host == "r2cdn.destiny.gg")

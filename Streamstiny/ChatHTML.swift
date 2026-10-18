@@ -4,9 +4,20 @@ import Foundation
 // These helpers are also exercised by the Foundation-only regression runner.
 enum ChatHTML {
   static func escape(_ text: String) -> String {
-    text.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
-      .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
-      .replacingOccurrences(of: "'", with: "&#39;")
+    guard text.utf8.contains(where: { $0 == 38 || $0 == 60 || $0 == 62 || $0 == 34 || $0 == 39 }) else { return text }
+    var result: [UInt8] = []
+    result.reserveCapacity(text.utf8.count)
+    for byte in text.utf8 {
+      switch byte {
+      case 38: result.append(contentsOf: "&amp;".utf8)
+      case 60: result.append(contentsOf: "&lt;".utf8)
+      case 62: result.append(contentsOf: "&gt;".utf8)
+      case 34: result.append(contentsOf: "&quot;".utf8)
+      case 39: result.append(contentsOf: "&#39;".utf8)
+      default: result.append(byte)
+      }
+    }
+    return String(decoding: result, as: UTF8.self)
   }
   private static let tokens = try! NSRegularExpression(pattern: #"\S+|\s+"#)
   static func body(_ text: String, links: Bool = true, emote: (String) -> URL?) -> String {
