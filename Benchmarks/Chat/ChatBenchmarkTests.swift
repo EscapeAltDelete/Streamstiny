@@ -31,8 +31,8 @@ import WebKit
     let feed: Feed
     let emotes: EmoteStore
     var body: some View {
-      ChatList(messages: feed.messages, emotes: emotes, fontSize: 16, timestamps: true,
-        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in })
+      ChatList(messages: emotes.combining(feed.messages), emotes: emotes, fontSize: 16, timestamps: true,
+        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in }, stateRevision: emotes.revision)
     }
   }
   func residentBytes() -> Double {
@@ -60,6 +60,7 @@ import WebKit
     // In the application the chat surface exists before the picker opens.
     // Keep that context alive for both implementations, without loading emotes.
     let emptyFeed = Feed()
+    emptyFeed.messages = (0..<1000).map { ChatMessage(payload: ["nick": "Benchmark", "data": "Existing message \($0)", "timestamp": Double(1700000000000 + $0)]) }
     let background = UIHostingController(rootView: Timeline(feed: emptyFeed, emotes: emotes))
     window.rootViewController = background; window.makeKeyAndVisible(); background.view.layoutIfNeeded()
     let loadStart = CACurrentMediaTime()
