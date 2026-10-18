@@ -5,6 +5,12 @@ import CryptoKit
 @testable import ChatBenchmark
 
 @MainActor extension ChatBenchmarkTests {
+  func javascript<T>(_ web: WKWebView, _ body: String, arguments: [String: Any] = [:]) async throws -> T {
+    let result: Any = try await withCheckedThrowingContinuation { continuation in
+      web.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .page) { continuation.resume(with: $0) }
+    }
+    return try XCTUnwrap(result as? T, "Unexpected JavaScript result: \(result)")
+  }
   func findWeb(_ view: UIView) -> WKWebView? {
     if let web = view as? WKWebView { return web }
     return view.subviews.lazy.compactMap { self.findWeb($0) }.first
@@ -35,7 +41,7 @@ import CryptoKit
     try await Task.sleep(for: .seconds(2))
     var results: [String: Any] = [:]
     for name in ["Listening", "pepeW"] {
-      let bounds = try await web.callAsyncJavaScript("const node=document.querySelector('.emote.'+name);const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};", arguments: ["name": name], in: nil, in: .page) as! [String: Double]
+      let bounds: [String: Double] = try await javascript(web, "const node=document.querySelector('.emote.'+name);const r=node.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};", arguments: ["name": name])
       XCTAssertGreaterThanOrEqual(bounds["y"]!, 0, "Full emote must fit within the viewport")
       let capture = WKSnapshotConfiguration()
       capture.rect = CGRect(x: bounds["x"]!, y: bounds["y"]!, width: bounds["width"]!, height: bounds["height"]!)
@@ -68,8 +74,8 @@ import CryptoKit
     let sample = "document.getAnimations().forEach(a=>{a.pause();a.currentTime=time});const c=getComputedStyle(document.querySelector('.PepoPunch'));return [c.backgroundPosition,c.transform,c.width,c.animationDuration,c.animationTimingFunction,c.animationIterationCount,c.animationDelay];"
     var samples: [[String: Any]] = []
     for time in [0, 125, 375, 875, 1100, 2750, 4500] {
-      let actual = try await web.callAsyncJavaScript(sample, arguments: ["time": time], in: nil, in: .page) as! [String]
-      let expected = try await reference.callAsyncJavaScript(sample, arguments: ["time": time], in: nil, in: .page) as! [String]
+      let actual: [String] = try await javascript(web, sample, arguments: ["time": time])
+      let expected: [String] = try await javascript(reference, sample, arguments: ["time": time])
       XCTAssertEqual(actual, expected, "PepoPunch must match native CSS at \(time) ms")
       samples.append(["time_ms": time, "actual": actual])
     }
@@ -81,7 +87,7 @@ import CryptoKit
     results["badges"] = badges
     let catalog = emotes.catalog.map { ["name": $0.key, "url": $0.value.absoluteString.replacingOccurrences(of: "https:", with: "dgg-asset:")] }
     let decode = "let next=0,success=0,errors=[];await Promise.all(Array.from({length:4},async()=>{while(next<catalog.length){const item=catalog[next++],image=new Image();try{image.src=item.url;await image.decode();if(!image.naturalWidth||!image.naturalHeight)throw Error('Empty image');success++}catch(e){errors.push({name:item.name,url:item.url,error:String(e)})}}}));return {success,errors};"
-    let audit = try await web.callAsyncJavaScript(decode, arguments: ["catalog": catalog], in: nil, in: .page) as! [String: Any]
+    let audit: [String: Any] = try await javascript(web, decode, arguments: ["catalog": catalog])
     XCTAssertEqual((audit["errors"] as? [Any])?.count, 0, "Every current catalog format must decode through the production transport: \(audit)")
     results["full_catalog"] = audit
     snapshot(window, name: "native-emote-validation")
