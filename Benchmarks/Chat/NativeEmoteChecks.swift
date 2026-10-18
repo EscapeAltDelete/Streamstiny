@@ -41,7 +41,12 @@ import CryptoKit
       capture.rect = CGRect(x: bounds["x"]!, y: bounds["y"]!, width: bounds["width"]!, height: bounds["height"]!)
       var hashes = Set<String>()
       for index in 0..<8 {
-        let image = try await web.takeSnapshot(with: capture)
+        let image: UIImage = try await withCheckedThrowingContinuation { continuation in
+          web.takeSnapshot(with: capture) { image, error in
+            if let image { continuation.resume(returning: image) }
+            else { continuation.resume(throwing: error ?? URLError(.cannotDecodeContentData)) }
+          }
+        }
         let data = try XCTUnwrap(image.pngData())
         hashes.insert(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
         if index == 0 { let attachment = XCTAttachment(image: image); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
