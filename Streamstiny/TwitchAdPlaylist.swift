@@ -199,16 +199,63 @@ enum TwitchBackupSelection {
       return String(codec.split(separator: ".").first ?? "")
     })
   }
+  typealias Candidate = (playlist: TwitchAdPlaylist, variant: HLSVariant)
+  private enum Probe: Sendable { case result(Candidate?), deadline }
+
   static func compatible(_ candidate: HLSVariant, with primary: HLSVariant) -> Bool {
-    !candidate.externalMedia && candidate.height > 0
+    !candidate.externalMedia && (candidate.height > 0 || (candidate.isSource && primary.isSource))
       && families(candidate.codecs) == families(primary.codecs)
   }
+  static func matchesQuality(_ candidate: HLSVariant, of primary: HLSVariant) -> Bool {
+    if primary.isSource { return candidate.isSource }
+    return candidate.width == primary.width && candidate.height == primary.height
+      && (primary.frameRate == 0 || candidate.frameRate.rounded() == primary.frameRate.rounded())
+  }
+  static func prefers(_ candidate: HLSVariant, over other: HLSVariant, for primary: HLSVariant) -> Bool {
+    let exact = matchesQuality(candidate, of: primary), otherExact = matchesQuality(other, of: primary)
+    if exact != otherExact { return exact }
+    if !primary.isSource {
+      let fits = candidate.width <= primary.width && candidate.height <= primary.height
+      let otherFits = other.width <= primary.width && other.height <= primary.height
+      if fits != otherFits { return fits }
+      let pixels = primary.width * primary.height
+      let distance = abs(candidate.width * candidate.height - pixels)
+      let otherDistance = abs(other.width * other.height - pixels)
+      if distance != otherDistance { return distance < otherDistance }
+    }
+    if candidate.width * candidate.height != other.width * other.height {
+      return candidate.width * candidate.height > other.width * other.height
+    }
+    return candidate.frameRate > other.frameRate
+  }
   static func ranked(_ candidates: [HLSVariant], for primary: HLSVariant) -> [HLSVariant] {
-    candidates.filter { compatible($0, with: primary) }.sorted {
-      let leftFits = $0.height <= primary.height, rightFits = $1.height <= primary.height
-      if leftFits != rightFits { return leftFits }
-      if $0.height != $1.height { return $0.height > $1.height }
-      return $0.frameRate > $1.frameRate
+    candidates.filter { compatible($0, with: primary) }.sorted { prefers($0, over: $1, for: primary) }
+  }
+  // A fast low-quality result must not cancel a slower matching rendition.
+  // Keep the best clean result when the overall deadline expires.
+  static func search(for primary: HLSVariant, timeout: Duration = .milliseconds(6500),
+    probe: @escaping @Sendable (String) async -> Candidate?) async -> Candidate? {
+    guard !Task.isCancelled else { return nil }
+    return await withTaskGroup(of: Probe.self) { group in
+      let contexts = ["embed", "popout", "site", "mobile_web", "autoplay"]
+      for context in contexts { group.addTask { .result(await probe(context)) } }
+      group.addTask { try? await Task.sleep(for: timeout); return .deadline }
+      var remaining = contexts.count
+      var best: Candidate?
+      results: for await event in group {
+        guard !Task.isCancelled else { break }
+        switch event {
+        case .deadline: break results
+        case .result(let candidate):
+          remaining -= 1
+          if let candidate, compatible(candidate.variant, with: primary),
+            best == nil || prefers(candidate.variant, over: best!.variant, for: primary) { best = candidate }
+          if let best, matchesQuality(best.variant, of: primary) { break results }
+          if remaining == 0 { break results }
+        }
+      }
+      group.cancelAll()
+      return Task.isCancelled ? nil : best
     }
   }
 }

@@ -114,15 +114,17 @@ actor TwitchPlaylistSession {
   private var port: UInt16 = 0
   private var timelines: [URL: TwitchAdTimeline] = [:]
   private var alternative: HLSVariant?
+  private var upgrade: Task<Void, Never>?
   private var nextProbe = Date.distantPast
   private var inFlight: [URL: Task<(Int, String), Never>] = [:]
   private var blocked: Set<URL> = []
   var waiting: Bool { !blocked.isEmpty }
   private static let uri = try! NSRegularExpression(pattern: #"URI="([^"]+)""#)
 
-  init(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver) {
+  init(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver,
+    configuration: URLSessionConfiguration = .ephemeral) {
     self.source = source; self.variants = variants; self.resolver = resolver
-    let config = URLSessionConfiguration.ephemeral
+    let config = configuration
     config.timeoutIntervalForRequest = 3
     config.httpMaximumConnectionsPerHost = 4
     config.httpAdditionalHeaders = TwitchResolver.mediaHeaders
@@ -190,16 +192,10 @@ actor TwitchPlaylistSession {
           blocked.remove(url)
           return (200, resolved)
         }
+      if !primary.hasAds { upgrade?.cancel(); upgrade = nil }
       var backup: TwitchAdPlaylist?, origin = "primary"
       if primary.hasAds && primary.cleanSuffix == nil {
-        // Search all contexts before exposing a preroll. Each request remains bounded.
-        let candidate = await withTaskGroup(of: (TwitchAdPlaylist, String)?.self) { group in
-          group.addTask { await self.cleanAlternative(variant, fragmented: primary.segments.first?.map != nil) }
-          group.addTask { try? await Task.sleep(for: .milliseconds(6500)); return nil }
-          let value = await group.next() ?? nil
-          group.cancelAll()
-          return value
-        }
+        let candidate = await cleanAlternative(variant, fragmented: primary.segments.first?.map != nil)
         if let candidate { backup = candidate.0; origin = candidate.1 }
       }
       try Task.checkCancellation()
@@ -214,37 +210,35 @@ actor TwitchPlaylistSession {
     if let candidate = alternative,
       TwitchBackupSelection.compatible(candidate, with: variant),
       let playlist = await cleanPlaylist(candidate, fragmented: fragmented) {
+      // Keep live media flowing while checking for a better rendition in the background.
+      if !TwitchBackupSelection.matchesQuality(candidate, of: variant), Date() >= nextProbe, upgrade == nil {
+        nextProbe = Date().addingTimeInterval(5)
+        upgrade = Task {
+          let found = await search(variant, fragmented: fragmented)
+          guard !Task.isCancelled else { return }
+          if let found, alternative == nil || alternative?.url == candidate.url,
+            TwitchBackupSelection.prefers(found.variant, over: candidate, for: variant) { alternative = found.variant }
+          upgrade = nil
+        }
+      }
       return (playlist, candidate.url.absoluteString)
     }
     alternative = nil
     guard !Task.isCancelled, Date() >= nextProbe else { return nil }
     nextProbe = Date().addingTimeInterval(5)
-    // Failure in one playback context must not prevent trying the others.
-    // Autoplay's Android grant often offers only 360p; prefer Source briefly.
-    return await withTaskGroup(of: (TwitchAdPlaylist, HLSVariant)?.self) { group in
-      for context in ["site", "popout", "mobile_web", "embed", "autoplay"] {
-        group.addTask {
-          do {
-            if context == "autoplay" { try await Task.sleep(for: .milliseconds(600)) }
-            let media = try await self.resolver.twitchAlternative(self.source, playerType: context)
-            let candidates = TwitchBackupSelection.ranked(media.variants ?? [], for: variant)
-            for candidate in candidates.prefix(3) {
-              try Task.checkCancellation()
-              if let playlist = await self.cleanPlaylist(candidate, fragmented: fragmented) {
-                return (playlist, candidate)
-              }
-            }
-          } catch { }
-          return nil
+    guard let found = await search(variant, fragmented: fragmented), !Task.isCancelled else { return nil }
+    alternative = found.variant
+    return (found.playlist, found.variant.url.absoluteString)
+  }
+  private func search(_ variant: HLSVariant, fragmented: Bool) async -> TwitchBackupSelection.Candidate? {
+    await TwitchBackupSelection.search(for: variant) { context in
+      do {
+        let media = try await self.resolver.twitchAlternative(self.source, playerType: context)
+        for candidate in TwitchBackupSelection.ranked(media.variants ?? [], for: variant).prefix(3) {
+          guard !Task.isCancelled else { return nil }
+          if let playlist = await self.cleanPlaylist(candidate, fragmented: fragmented) { return (playlist, candidate) }
         }
-      }
-      while let result = await group.next() {
-        if let (playlist, candidate) = result, !Task.isCancelled {
-          alternative = candidate
-          group.cancelAll()
-          return (playlist, candidate.url.absoluteString)
-        }
-      }
+      } catch { }
       return nil
     }
   }
@@ -258,6 +252,7 @@ actor TwitchPlaylistSession {
     } catch { return nil }
   }
   func stop() {
+    upgrade?.cancel(); upgrade = nil
     for work in inFlight.values { work.cancel() }
     inFlight.removeAll(); network.invalidateAndCancel()
   }

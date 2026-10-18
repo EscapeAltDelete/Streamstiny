@@ -18,11 +18,20 @@ private final class PlaybackProtocol: URLProtocol, @unchecked Sendable {
   private static let lock = NSLock()
   private static var replies: [String: (Int, String)] = [:]
   private static var requests = 0
+  private static var bodies: [Data] = []
   static func prepare(_ replies: [String: (Int, String)]) {
     lock.lock()
     defer { lock.unlock() }
     self.replies = replies
     requests = 0
+    bodies = []
+  }
+  static var variables: [[String: String]] {
+    lock.lock()
+    defer { lock.unlock() }
+    return bodies.compactMap {
+      (try? JSONSerialization.jsonObject(with: $0) as? [String: Any])?["variables"] as? [String: String]
+    }
   }
   static var count: Int {
     lock.lock()
@@ -34,8 +43,21 @@ private final class PlaybackProtocol: URLProtocol, @unchecked Sendable {
   override func startLoading() {
     let url = request.url!
     let key = url.host! + URLComponents(url: url, resolvingAgainstBaseURL: false)!.path
+    var body = request.httpBody
+    if body == nil, let stream = request.httpBodyStream {
+      stream.open()
+      defer { stream.close() }
+      var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+      while true {
+        let count = stream.read(&buffer, maxLength: buffer.count)
+        if count <= 0 { break }
+        data.append(contentsOf: buffer.prefix(count))
+      }
+      body = data
+    }
     Self.lock.lock()
     Self.requests += 1
+    if let body { Self.bodies.append(body) }
     let client = request.value(forHTTPHeaderField: "X-YouTube-Client-Name") ?? ""
     let reply = Self.replies[key + ":" + client] ?? Self.replies[key]
     Self.lock.unlock()
@@ -111,8 +133,17 @@ enum PlaybackResolverTests {
       PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, master)])
       let media = try await resolver.resolve(StreamSource(provider: .twitch, key: "channel"))
       precondition(media.variants?.count == 1 && PlaybackProtocol.count == 2)
+      precondition(PlaybackProtocol.variables.first?["playerType"] == "popout")
+      precondition(PlaybackProtocol.variables.first?["platform"] == "web")
       let query = URLComponents(url: media.url, resolvingAgainstBaseURL: false)!.queryItems!
       precondition(query.first { $0.name == "fast_bread" }?.value == String(enabled))
+    }
+    for context in ["embed", "popout", "site", "mobile_web", "autoplay"] {
+      PlaybackProtocol.prepare(["gql.twitch.tv/gql": (200, twitch), "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, master)])
+      let media = try await resolver.twitchAlternative(StreamSource(provider: .twitch, key: "channel"), playerType: context)
+      precondition(media.variants?.count == 1 && PlaybackProtocol.count == 2)
+      precondition(PlaybackProtocol.variables.first?["playerType"] == context)
+      precondition(PlaybackProtocol.variables.first?["platform"] == (context == "autoplay" ? "android" : "web"))
     }
     PlaybackProtocol.prepare(["gql.twitch.tv/gql": (401, "")])
     do {
@@ -120,6 +151,60 @@ enum PlaybackResolverTests {
       preconditionFailure("Authorization failures must not become retry loops")
     } catch TwitchFailure.signIn {}
     precondition(PlaybackProtocol.count == 1)
+
+    // Exercise the real gateway cache: a fallback must be usable immediately,
+    // then upgraded when a matching clean rendition becomes available.
+    do {
+      let previousBlocking = UserDefaults.standard.object(forKey: "twitchAdBlocking")
+      UserDefaults.standard.set(true, forKey: "twitchAdBlocking")
+      defer { UserDefaults.standard.set(previousBlocking, forKey: "twitchAdBlocking") }
+      let primaryURL = URL(string: "https://video.ttvnw.net/primary.m3u8")!
+      let primary = HLSVariant(url: primaryURL, width: 1920, height: 1080,
+        bandwidth: 6_000_000, frameRate: 60, externalMedia: false, codecs: "avc1.640028,mp4a.40.2")
+      let backups = """
+        #EXTM3U
+        #EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60,CODECS="avc1.640028,mp4a.40.2"
+        https://video.ttvnw.net/hd.m3u8
+        #EXT-X-STREAM-INF:BANDWIDTH=500000,RESOLUTION=640x360,FRAME-RATE=30,CODECS="avc1.42001E,mp4a.40.2"
+        https://video.ttvnw.net/sd.m3u8
+        """
+      func media(_ name: String, _ sequence: Int, ad: Bool = false) -> String {
+        "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:\(sequence)\n#EXTINF:2,\(ad ? "advertisement" : "live")\nhttps://video.ttvnw.net/\(name).ts\n"
+      }
+      func fixtures(hd: String) -> [String: (Int, String)] {
+        ["gql.twitch.tv/gql": (200, twitch),
+         "usher.ttvnw.net/api/v2/channel/hls/channel.m3u8": (200, backups),
+         "video.ttvnw.net/primary.m3u8": (200, media("ad", 100, ad: true)),
+         "video.ttvnw.net/hd.m3u8": (200, hd),
+         "video.ttvnw.net/sd.m3u8": (200, media("sd", 100))]
+      }
+      PlaybackProtocol.prepare(fixtures(hd: media("hd-ad", 100, ad: true)))
+      let session = TwitchPlaylistSession(source: StreamSource(provider: .twitch, key: "channel"),
+        variants: [primary], resolver: resolver, configuration: config)
+      let local = await session.route(primaryURL, port: 12345)
+      let fallback = await session.response(path: local.path)
+      precondition(fallback.status == 200 && fallback.text.contains("/sd.ts") && !fallback.text.contains("/ad.ts"))
+      let initialRequests = PlaybackProtocol.count
+      let cached = await session.response(path: local.path)
+      precondition(cached.text == fallback.text && PlaybackProtocol.count == initialRequests + 2,
+        "A warm backup reuses its grant and only fetches primary and backup manifests")
+      try await Task.sleep(for: .milliseconds(5100))
+      PlaybackProtocol.prepare(fixtures(hd: media("hd", 200)))
+      let continuing = await session.response(path: local.path)
+      precondition(continuing.text.contains("/sd.ts"), "Playback continues while the upgrade is searched")
+      var upgraded = false
+      for _ in 0..<40 {
+        try await Task.sleep(for: .milliseconds(25))
+        let result = await session.response(path: local.path)
+        if result.text.contains("/hd.ts") {
+          precondition(result.text.contains("#EXT-X-DISCONTINUITY"))
+          upgraded = true; break
+        }
+      }
+      precondition(upgraded, "A clean cached 360p backup must not lock playback below 1080p60")
+      await session.stop()
+      print("Passed Twitch gateway warm-cache reuse and live fallback-to-1080p60 upgrade regressions")
+    }
 
     let player = #"{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"video"},"streamingData":{"hlsManifestUrl":"https://manifest.googlevideo.com/master.m3u8"}}"#
     PlaybackProtocol.prepare(["www.youtube.com/watch": (200, "var ytInitialPlayerResponse = " + player), "manifest.googlevideo.com/master.m3u8": (200, master)])

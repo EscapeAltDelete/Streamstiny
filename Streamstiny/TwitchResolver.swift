@@ -50,7 +50,7 @@ actor TwitchResolver {
     try await resolve(source, credentials: TwitchAccount.shared.credentials(), playerType: playerType)
   }
 
-  private func resolve(_ source: StreamSource, credentials: TwitchCredentials, playerType: String = "site") async throws -> PlaybackMedia {
+  private func resolve(_ source: StreamSource, credentials: TwitchCredentials, playerType: String = "popout") async throws -> PlaybackMedia {
     try Task.checkCancellation()
     let key = source.key.lowercased()
     let query = "query NativePlayback($key: String!, $playerType: String!, $platform: String!) { streamPlaybackAccessToken(channelName: $key, params: {platform: $platform, playerBackend: \"mediaplayer\", playerType: $playerType}) { value signature } }"
