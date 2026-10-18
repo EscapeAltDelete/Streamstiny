@@ -42,10 +42,18 @@ import ImageIO
     defer { coordinator.stop(); web.removeFromSuperview() }
     let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
     let host = UIViewController(); window.rootViewController = host; window.makeKeyAndVisible()
-    host.view.addSubview(web); web.frame = host.view.bounds
+    host.view.addSubview(web); web.frame = window.bounds
+    web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    host.view.layoutIfNeeded()
     try await waitForRenderer(web)
-    let initial: Bool = try await javascript(web, "window.stableRow=document.querySelector('[data-message=stable-row]');return document.body.textContent.includes('message deleted') && !document.body.textContent.includes('Deleted text');")
-    XCTAssertTrue(initial)
+    var initial = false
+    for _ in 0..<100 {
+      initial = try await javascript(web, "const row=document.querySelector('[data-message=removed-row]');return Boolean(row?.textContent.includes('message deleted')) && !row.textContent.includes('Deleted text');")
+      if initial { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let initialState: String = try await javascript(web, "window.stableRow=document.querySelector('[data-message=stable-row]');return JSON.stringify({text:document.querySelector('[data-message=removed-row]')?.textContent,width:innerWidth,height:innerHeight,metrics:ChatRenderer.metrics()});")
+    XCTAssertTrue(initial, initialState)
     for expected in [true, false] {
       let action = try XCTUnwrap(coordinator.actions(["id": removed.id]).first as? UIAction)
       let button = UIButton(type: .system, primaryAction: action)
