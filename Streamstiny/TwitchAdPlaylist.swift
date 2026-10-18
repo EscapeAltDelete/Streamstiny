@@ -62,27 +62,20 @@ struct TwitchAdPlaylist: Sendable {
       } else if started { pending.append(line) } else { header.append(line) }
     }
     guard !segments.isEmpty else { return nil }
-    // Parse each advertised interval once, not once for every segment.
     let ranges = lines.filter { $0.hasPrefix("#EXT-X-DATERANGE:") && Self.adTag($0) }
-      .map { line -> (trigger: Bool, start: Date?, end: Date?) in
-        let fields = HLSPlaylist.attributes(line)
-        if fields["CLASS"] == "twitch-trigger" { return (true, nil, nil) }
-        let start = fields["START-DATE"].flatMap { dates.date(from: $0) ?? seconds.date(from: $0) }
-        let end = fields["END-DATE"].flatMap { dates.date(from: $0) ?? seconds.date(from: $0) }
-          ?? fields["DURATION"].flatMap(Double.init).flatMap { duration in
-            duration.isFinite && duration >= 0 ? start?.addingTimeInterval(duration) : nil
-          }
-        return (false, start, end)
-      }
+      .map(HLSPlaylist.attributes)
     self.segments = ranges.isEmpty ? segments : segments.map { segment in
-      let rangedAd = ranges.contains { range in
+      let rangedAd = ranges.contains { fields in
         // PietSmiet emits this client-side trigger on ordinary live media.
         // It is not evidence of an inserted ad when EXTINF explicitly says live.
-        if range.trigger {
+        if fields["CLASS"] == "twitch-trigger" {
           return !segment.lines.contains { $0.hasPrefix("#EXTINF:") && $0.hasSuffix(",live") }
         }
-        guard let start = segment.start, let adStart = range.start else { return true }
-        if let end = range.end { return start < end && start.addingTimeInterval(segment.duration) > adStart }
+        guard let start = segment.start, let value = fields["START-DATE"],
+          let adStart = dates.date(from: value) ?? seconds.date(from: value) else { return true }
+        let end = fields["END-DATE"].flatMap { dates.date(from: $0) ?? seconds.date(from: $0) }
+          ?? fields["DURATION"].flatMap(Double.init).flatMap { $0.isFinite && $0 >= 0 ? adStart.addingTimeInterval($0) : nil }
+        if let end { return start < end && start.addingTimeInterval(segment.duration) > adStart }
         return start.addingTimeInterval(segment.duration) > adStart
       }
       return Segment(sequence: segment.sequence, start: segment.start, duration: segment.duration,
@@ -123,7 +116,7 @@ struct TwitchAdTimeline {
   private var lastOutput: String?
   private(set) var waiting = false
 
-  mutating func render(_ primary: TwitchAdPlaylist, backup: TwitchAdPlaylist?, origin: String, force: Bool = false) -> String {
+  mutating func render(_ primary: TwitchAdPlaylist, backup: TwitchAdPlaylist?, origin: String) -> String {
     let cleanBackup = backup?.cleanSuffix.flatMap { playlist -> TwitchAdPlaylist? in
       guard !playlist.segments.contains(where: { $0.encrypted }),
         !primary.segments.contains(where: { $0.encrypted }),
@@ -132,7 +125,7 @@ struct TwitchAdTimeline {
       return playlist
     }
     let cleanPrimary = primary.cleanSuffix
-    waiting = force && primary.hasAds && cleanBackup == nil && cleanPrimary == nil
+    waiting = primary.hasAds && cleanBackup == nil && cleanPrimary == nil
     if waiting {
       return lastOutput ?? "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n"
     }

@@ -30,7 +30,6 @@ struct PlaybackPreferencesView: View {
   @AppStorage("highestQuality") private var highestQuality = false
   @AppStorage("twitchLowLatency") private var twitchLowLatency = false
   @AppStorage("twitchAdBlocking") private var twitchAdBlocking = false
-  @AppStorage("twitchForceAdBlocking") private var twitchForceAdBlocking = false
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
   var body: some View {
@@ -49,9 +48,8 @@ struct PlaybackPreferencesView: View {
       Section {
         Toggle("Low latency", isOn: $twitchLowLatency)
         Toggle("Block Twitch ads", isOn: $twitchAdBlocking)
-        if twitchAdBlocking { Toggle("Force ad blocking", isOn: $twitchForceAdBlocking) }
       } header: { Text("Twitch") } footer: {
-        Text("Low latency downloads video segments before they finish and may buffer more on slower connections. Ad blocking uses a clean alternative stream when available. Quality may temporarily decrease during ads and returns when the selected stream is clean. Force mode waits instead of playing detected ads when no clean alternative is available. Applies when opening or reloading a stream.")
+        Text("Low latency downloads video segments before they finish and may buffer more on slower connections. Ad blocking uses a clean alternative stream when available and waits instead of playing detected ads when none is available. Quality may temporarily decrease during ads and returns when the selected stream is clean. Applies when opening or reloading a stream.")
       }
       Section("Player") {
         Toggle("Show DGG viewers", isOn: $showDGGViewers)

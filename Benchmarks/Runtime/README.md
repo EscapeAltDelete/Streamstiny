@@ -4,6 +4,12 @@ Measured 18 October 2026 against `185e4ae66e78a85fb9c4b2fd2cb9fedfef2e5b39`
 (the WebKit chat overhaul), preserving functionality and the existing architecture.
 No application dependency or second rendering implementation was introduced.
 
+The Twitch date-range pre-parsing optimization was subsequently reverted at the
+user’s request while investigating unavailable clean streams. Its measurements
+below describe v0.0.15 and do not describe the current playlist parser. The chat
+optimizations remain. Twitch ad blocking now always uses the former Force-mode
+behavior behind one toggle.
+
 ## Audit and changes
 
 The audit covered chat models, filtering, rendering, resource ownership, image

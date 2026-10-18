@@ -109,7 +109,6 @@ actor TwitchPlaylistSession {
   private let network: URLSession
   private let blockAds = UserDefaults.standard.bool(forKey: "twitchAdBlocking")
   private let lowLatency = UserDefaults.standard.bool(forKey: "twitchLowLatency")
-  private let force = UserDefaults.standard.bool(forKey: "twitchForceAdBlocking")
   private var routes: [String: URL] = [:]
   private var paths: [URL: String] = [:]
   private var port: UInt16 = 0
@@ -183,7 +182,7 @@ actor TwitchPlaylistSession {
       guard let variant = variants.first(where: { $0.url == url }), !variant.externalMedia,
         let primary = TwitchAdPlaylist(resolved),
         !primary.segments.contains(where: { $0.encrypted }) else {
-          if force, resolved.components(separatedBy: .newlines).contains(where: {
+          if resolved.components(separatedBy: .newlines).contains(where: {
             TwitchAdPlaylist.adTag($0) || (!$0.hasPrefix("#") && $0.contains("/adsquared/"))
           }) {
             blocked.insert(url); return (503, "")
@@ -205,7 +204,7 @@ actor TwitchPlaylistSession {
       }
       try Task.checkCancellation()
       var timeline = timelines[url] ?? TwitchAdTimeline()
-      let result = timeline.render(primary, backup: backup, origin: origin, force: force)
+      let result = timeline.render(primary, backup: backup, origin: origin)
       if timeline.waiting { blocked.insert(url) } else { blocked.remove(url) }
       timelines[url] = timeline
       return (200, result)
