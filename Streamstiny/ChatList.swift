@@ -27,12 +27,21 @@ struct ChatList: UIViewRepresentable {
   @MainActor final class Coordinator: ChatWebCoordinator {
     var parent: ChatList
     private var inputs: [String: Input] = [:]
+    private var renderContext: RenderContext?
     private var ids: [String] = []
     private var sending = false
     private var pending = false
     private var revealed: Set<String> = []
     private let formatter = DateFormatter()
     private let announcement = UIImage(systemName: "megaphone.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal).pngData()?.base64EncodedString()
+    private struct RenderContext: Equatable {
+      let options: String
+      let revision: Int
+      let chatRevision: Int?
+      let chat: ObjectIdentifier?
+      let watchingFocus: Bool
+      let mentionHighlight: Bool
+    }
     private struct Input: Equatable {
       let message: ChatMessage
       let user: ChatUser
@@ -45,7 +54,7 @@ struct ChatList: UIViewRepresentable {
       let options: String
     }
     init(_ parent: ChatList) { self.parent = parent; super.init(emotes: parent.emotes) }
-    override func reset() { inputs.removeAll(); ids = []; sending = false; pending = false }
+    override func reset() { inputs.removeAll(); renderContext = nil; ids = []; sending = false; pending = false }
     override func refresh() {
       guard ready else { return }
       if sending { pending = true; return }
@@ -54,18 +63,26 @@ struct ChatList: UIViewRepresentable {
       let format = defaults.string(forKey: "chatTimestampFormat") ?? "HH:mm"
       if formatter.dateFormat != format { formatter.dateFormat = format }
       let options = "\(emotes.catalogRevision):\(parent.timestamps):\(format):\(ChatPreferences.removedMessages):\(rules.configuration):\(defaults.bool(forKey: "previewChatImages")):\(defaults.bool(forKey: "highlightChatTags"))"
+      let context = RenderContext(options: options, revision: parent.stateRevision,
+        chatRevision: parent.chat?.renderingRevision, chat: parent.chat.map(ObjectIdentifier.init),
+        watchingFocus: parent.watchingFocus, mentionHighlight: !defaults.bool(forKey: "disableMentionHighlight"))
+      let reuse = renderContext == context
+      renderContext = context
       var updates: [[String: Any]] = []
       let nextIDs = parent.messages.map(\.id)
       let retained = Set(nextIDs)
       revealed.formIntersection(retained)
       for id in ids where !retained.contains(id) { inputs.removeValue(forKey: id) }
       for message in parent.messages {
+        // Existing rows need no derived work until their content or context changes.
+        let isRevealed = revealed.contains(message.id)
+        if reuse, let previous = inputs[message.id], previous.message == message, previous.revealed == isRevealed { continue }
         let user = parent.chat?.users[message.nick.lowercased()] ?? message.user
         let highlighted = parent.chat?.isHighlighted(message, rules: rules) ?? rules.highlighted(message.text)
         let input = Input(message: message, user: user, tag: parent.chat?.tags[user.id], tagColor: parent.chat?.tagColors[user.id],
           highlighted: highlighted, spotlight: parent.chat.map { !$0.spotlights.isEmpty && $0.spotlights[message.spotlightIdentity] != nil } ?? false,
           faded: parent.watchingFocus && message.kind == "MSG" && !message.whisper && !highlighted && parent.chat?.isWatchingSame(message) != true,
-          revealed: revealed.contains(message.id), options: options)
+          revealed: isRevealed, options: options)
         if inputs[message.id] != input {
           let record = render(input, rules: rules)
           inputs[message.id] = input; updates.append(record)
