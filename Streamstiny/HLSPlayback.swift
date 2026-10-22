@@ -138,9 +138,9 @@ private final class HLSOptions: KSOptions {
     super.init()
     userAgent = headers["User-Agent"] ?? PlaybackResolver.userAgent
     appendHeader(headers)
-    let lowLatency = provider == .twitch && UserDefaults.standard.bool(forKey: "twitchLowLatency")
+    let lowLatency = HLSLowLatency.enabled(for: provider)
     preferredForwardBufferDuration = !lowLatency && url.host == "127.0.0.1" ? 2 : 0.1
-    if lowLatency { formatContextOptions["live_start_index"] = -2 }
+    if lowLatency { formatContextOptions["live_start_index"] = provider == .youtube ? -1 : -2 }
     if lowLatency || provider == .youtube {
       formatContextOptions["analyzeduration"] = 500_000
     }

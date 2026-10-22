@@ -44,6 +44,7 @@ import Foundation
     try ChatEncodingTests.run()
     try await ChatAssetsTests.run()
     TwitchPlaybackTests.run()
+    LowLatencyTests.run()
     try await TwitchBackupTests.run()
     try await PlaybackResolverTests.run()
     print("Passed live-source parsing, persistence, and quality regressions")

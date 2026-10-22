@@ -47,7 +47,7 @@ import SwiftUI
   }
   private let resolver = PlaybackResolver()
   private var source: StreamSource?
-  private var twitchGateway: TwitchPlaylistGateway?
+  private var playlistGateway: PlaylistGateway?
   private var retry: Task<Void, Never>?
   private var retryVersion = 0
   private var generation = 0
@@ -98,8 +98,8 @@ import SwiftUI
     loading = true
     if !force {
       hls?.pause()
-      twitchGateway?.stop()
-      twitchGateway = nil
+      playlistGateway?.stop()
+      playlistGateway = nil
       playing = false
       buffering = false
     }
@@ -135,17 +135,18 @@ import SwiftUI
       }
       try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try AVAudioSession.sharedInstance().setActive(true)
-      var gateway: TwitchPlaylistGateway?
-      if source.provider == .twitch, UserDefaults.standard.bool(forKey: "twitchAdBlocking") || UserDefaults.standard.bool(forKey: "twitchLowLatency") {
-        gateway = try await TwitchPlaylistGateway.start(source: source, variants: variants, resolver: resolver)
+      var gateway: PlaylistGateway?
+      if source.provider == .twitch || source.provider == .kick,
+        HLSLowLatency.enabled(for: source.provider) || (source.provider == .twitch && UserDefaults.standard.bool(forKey: "twitchAdBlocking")) {
+        gateway = try await PlaylistGateway.start(source: source, variants: variants, resolver: resolver)
         guard version == generation, !Task.isCancelled else { gateway?.stop(); return }
       }
       let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
       let playbackURL = await gateway?.url(for: remoteURL) ?? remoteURL
       guard version == generation, !Task.isCancelled else { gateway?.stop(); return }
       installHLS(playbackURL, variant: variant)
-      twitchGateway?.stop()
-      twitchGateway = gateway
+      playlistGateway?.stop()
+      playlistGateway = gateway
       if commands.isEmpty { configureRemoteCommands() }
       loading = false
       stall?.cancel()
@@ -260,7 +261,7 @@ import SwiftUI
         }
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
         let remoteURL = Self.playbackURL(master: media.url, variant: variant, edgeURL: edgeURL)
-        let playbackURL = await twitchGateway?.url(for: remoteURL) ?? remoteURL
+        let playbackURL = await playlistGateway?.url(for: remoteURL) ?? remoteURL
         guard generation == version, selectionVersion == change, !Task.isCancelled else { return }
         installHLS(playbackURL, variant: variant)
         qualityID = id
@@ -322,8 +323,8 @@ import SwiftUI
     commands.removeAll()
     hls?.stop()
     hls = nil
-    twitchGateway?.stop()
-    twitchGateway = nil
+    playlistGateway?.stop()
+    playlistGateway = nil
     source = nil
     media = nil
     variants = []
@@ -368,7 +369,7 @@ import SwiftUI
 
   private func recoverFailure() {
     guard retry == nil, !loading else { return }
-    if waitingForAds, let gateway = twitchGateway, let source, let media {
+    if waitingForAds, let gateway = playlistGateway, let source, let media {
       let version = generation
       retryVersion += 1
       let attempt = retryVersion
@@ -401,7 +402,7 @@ import SwiftUI
     }
   }
   private func updateTime() {
-    waitingForAds = twitchGateway?.waiting ?? false
+    waitingForAds = playlistGateway?.waiting ?? false
     if let hls {
       let engine = hls.engine
       if engine.playbackState == .finished, hls.error == nil {
@@ -521,6 +522,8 @@ struct PlayerView: View {
   let toggleChat: () -> Void
   @Environment(\.scenePhase) private var scenePhase
   @AppStorage("twitchLowLatency") private var twitchLowLatency = false
+  @AppStorage("kickLowLatency") private var kickLowLatency = false
+  @AppStorage("youtubeLowLatency") private var youtubeLowLatency = false
   @AppStorage("automaticCatchUp") private var automaticCatchUp = false
   @AppStorage("targetBuffer") private var targetBuffer = 3.0
   @AppStorage("highestQuality") private var highestQuality = false
@@ -575,6 +578,12 @@ struct PlayerView: View {
     }
     .onChange(of: twitchLowLatency) { _, _ in
       if source.provider == .twitch { playback.reload() }
+    }
+    .onChange(of: kickLowLatency) { _, _ in
+      if source.provider == .kick { playback.reload() }
+    }
+    .onChange(of: youtubeLowLatency) { _, _ in
+      if source.provider == .youtube { playback.reload() }
     }
     .onChange(of: automaticCatchUp) { _, _ in configurePlayback() }
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }

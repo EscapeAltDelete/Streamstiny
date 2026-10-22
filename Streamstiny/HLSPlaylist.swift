@@ -88,6 +88,40 @@ enum HLSPlaylist {
   }
 }
 
+// Expose advertised open segments to the existing reader; media stays on the CDN.
+enum HLSLowLatency {
+  static func enabled(for provider: StreamSource.Provider) -> Bool {
+    switch provider {
+    case .twitch: return UserDefaults.standard.bool(forKey: "twitchLowLatency")
+    case .kick: return UserDefaults.standard.bool(forKey: "kickLowLatency")
+    case .youtube: return UserDefaults.standard.bool(forKey: "youtubeLowLatency")
+    default: return false
+    }
+  }
+  static func expand(_ text: String, provider: StreamSource.Provider = .twitch) -> String {
+    guard provider == .twitch || provider == .kick,
+      !text.contains("#EXT-X-ENDLIST"), let playlist = TwitchAdPlaylist(text),
+      provider != .twitch || !playlist.hasAds,
+      !playlist.segments.contains(where: { $0.encrypted }) else { return text }
+    let prefetch = provider == .kick ? "#EXT-X-PREFETCH" : "#EXT-X-TWITCH-PREFETCH"
+    let duration = playlist.segments.map(\.duration).reduce(0, +) / Double(playlist.segments.count)
+    var seen = Set(playlist.segments.compactMap { $0.lines.last })
+    var lines: [String] = []
+    var discontinuity = false
+    for line in text.components(separatedBy: .newlines) {
+      if line == "#EXT-X-DISCONTINUITY" || line == prefetch + "-DISCONTINUITY" { discontinuity = true }
+      if !line.isEmpty, !line.hasPrefix("#") { discontinuity = false }
+      if line.hasPrefix(prefetch + ":"), !discontinuity {
+        let address = String(line.dropFirst(prefetch.count + 1))
+        guard let url = URL(string: address), url.scheme == nil || url.scheme == "https",
+          !address.isEmpty, seen.insert(address).inserted else { continue }
+        lines += ["#EXTINF:\(duration),live", address]
+      } else { lines.append(line) }
+    }
+    return lines.joined(separator: "\n")
+  }
+}
+
 enum AngelEdge: String, CaseIterable, Identifiable, Sendable {
   case newYork = "nyc1"
   case sanFrancisco = "sfo1"

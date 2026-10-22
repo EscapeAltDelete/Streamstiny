@@ -29,6 +29,8 @@ struct PlaybackPreferencesView: View {
   @AppStorage("targetBuffer") private var targetBuffer = 3.0
   @AppStorage("highestQuality") private var highestQuality = false
   @AppStorage("twitchLowLatency") private var twitchLowLatency = false
+  @AppStorage("kickLowLatency") private var kickLowLatency = false
+  @AppStorage("youtubeLowLatency") private var youtubeLowLatency = false
   @AppStorage("twitchAdBlocking") private var twitchAdBlocking = false
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
@@ -50,6 +52,16 @@ struct PlaybackPreferencesView: View {
         Toggle("Block Twitch ads", isOn: $twitchAdBlocking)
       } header: { Text("Twitch") } footer: {
         Text("Low latency downloads video segments before they finish and may buffer more on slower connections. Ad blocking uses a clean alternative stream when available and waits instead of playing detected ads when none is available. Quality may temporarily decrease during ads and returns when the selected stream is clean. Applies when opening or reloading a stream.")
+      }
+      Section {
+        Toggle("Low latency", isOn: $kickLowLatency)
+      } header: { Text("Kick") } footer: {
+        Text("Downloads advertised video segments before they finish. May buffer more on slower connections.")
+      }
+      Section {
+        Toggle("Low latency", isOn: $youtubeLowLatency)
+      } header: { Text("YouTube") } footer: {
+        Text("Experimental. Starts at the newest available live segment and may buffer more. YouTube's broadcast latency still applies.")
       }
       Section("Player") {
         Toggle("Show DGG viewers", isOn: $showDGGViewers)

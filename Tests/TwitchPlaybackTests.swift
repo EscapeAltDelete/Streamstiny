@@ -82,21 +82,21 @@ enum TwitchPlaybackTests {
     precondition(ended.render(TwitchAdPlaylist(clean + "#EXT-X-ENDLIST\n")!, backup: nil, origin: "primary").hasSuffix("#EXT-X-ENDLIST\n"))
 
     let prefetch = clean + "#EXT-X-TWITCH-PREFETCH:https://cdn.example/103.ts\n#EXT-X-TWITCH-PREFETCH:https://cdn.example/104.ts\n"
-    let expanded = TwitchLowLatency.expand(prefetch)
+    let expanded = HLSLowLatency.expand(prefetch)
     let lowLatency = TwitchAdPlaylist(expanded)!
     precondition(lowLatency.segments.count == 5 && lowLatency.segments.last?.sequence == 104)
     precondition(lowLatency.segments.last?.duration == 2 && !lowLatency.hasAds)
     precondition(!expanded.contains("#EXT-X-TWITCH-PREFETCH"), "Expose open segments to the HLS reader")
-    precondition(TwitchLowLatency.expand(clean) == clean)
-    precondition(TwitchLowLatency.expand(prefetch + "#EXT-X-ENDLIST\n") == prefetch + "#EXT-X-ENDLIST\n")
+    precondition(HLSLowLatency.expand(clean) == clean)
+    precondition(HLSLowLatency.expand(prefetch + "#EXT-X-ENDLIST\n") == prefetch + "#EXT-X-ENDLIST\n")
     let encrypted = prefetch.replacingOccurrences(of: "#EXT-X-MEDIA-SEQUENCE:100", with: "#EXT-X-MEDIA-SEQUENCE:100\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\"")
-    precondition(TwitchLowLatency.expand(encrypted) == encrypted)
+    precondition(HLSLowLatency.expand(encrypted) == encrypted)
     let advertising = prefetch.replacingOccurrences(of: ",live", with: ",advertisement")
-    precondition(TwitchLowLatency.expand(advertising) == advertising, "Do not speculate through ads")
+    precondition(HLSLowLatency.expand(advertising) == advertising, "Do not speculate through ads")
     let boundary = clean + "#EXT-X-DISCONTINUITY\n#EXT-X-TWITCH-PREFETCH:https://cdn.example/103.ts\n"
-    precondition(TwitchLowLatency.expand(boundary) == boundary, "Wait for confirmation across an unknown ad boundary")
+    precondition(HLSLowLatency.expand(boundary) == boundary, "Wait for confirmation across an unknown ad boundary")
     let futureAd = prefetch.replacingOccurrences(of: "#EXT-X-MEDIA-SEQUENCE:100", with: "#EXT-X-MEDIA-SEQUENCE:100\n#EXT-X-DATERANGE:ID=\"stitched-ad-2\",CLASS=\"twitch-stitched-ad\",START-DATE=\"2026-10-17T10:00:06Z\",DURATION=4")
-    let expandedAd = TwitchAdPlaylist(TwitchLowLatency.expand(futureAd))!
+    let expandedAd = TwitchAdPlaylist(HLSLowLatency.expand(futureAd))!
     precondition(expandedAd.segments.suffix(2).allSatisfy(\.isAd), "Apply ad ranges to prefetched video too")
     var continuous = TwitchAdTimeline()
     let initial = continuous.render(lowLatency, backup: nil, origin: "primary")

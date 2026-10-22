@@ -179,7 +179,7 @@ enum PlaybackResolverTests {
          "video.ttvnw.net/sd.m3u8": (200, media("sd", 100))]
       }
       PlaybackProtocol.prepare(fixtures(hd: media("hd-ad", 100, ad: true)))
-      let session = TwitchPlaylistSession(source: StreamSource(provider: .twitch, key: "channel"),
+      let session = PlaylistSession(source: StreamSource(provider: .twitch, key: "channel"),
         variants: [primary], resolver: resolver, configuration: config)
       let local = await session.route(primaryURL, port: 12345)
       let fallback = await session.response(path: local.path)
@@ -204,6 +204,53 @@ enum PlaybackResolverTests {
       precondition(upgraded, "A clean cached 360p backup must not lock playback below 1080p60")
       await session.stop()
       print("Passed Twitch gateway warm-cache reuse and live fallback-to-1080p60 upgrade regressions")
+    }
+
+    do {
+      let keys = ["kickLowLatency", "twitchAdBlocking"]
+      let previous = keys.map { UserDefaults.standard.object(forKey: $0) }
+      defer { for (key, value) in zip(keys, previous) { UserDefaults.standard.set(value, forKey: key) } }
+      UserDefaults.standard.set(true, forKey: "twitchAdBlocking")
+      let masterURL = URL(string: "https://test.playback.live-video.net/master.m3u8")!
+      let kickMaster = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,FRAME-RATE=60\nhttps://test.playlist.live-video.net/hd.m3u8\n"
+      let kickMedia = """
+        #EXTM3U
+        #EXT-X-TARGETDURATION:6
+        #EXT-X-MEDIA-SEQUENCE:100
+        #EXTINF:4.167,advertisement
+        https://test.hls.live-video.net/100.ts
+        #EXT-X-PREFETCH:https://test.hls.live-video.net/101.ts
+        """ + "\n"
+      for enabled in [false, true] {
+        UserDefaults.standard.set(enabled, forKey: "kickLowLatency")
+        PlaybackProtocol.prepare([
+          "test.playback.live-video.net/master.m3u8": (200, kickMaster),
+          "test.playlist.live-video.net/hd.m3u8": (200, kickMedia),
+        ])
+        let session = PlaylistSession(source: StreamSource(provider: .kick, key: "channel"),
+          variants: [], resolver: resolver, configuration: config)
+        let route = await session.route(masterURL, port: 12345)
+        let root = await session.response(path: route.path)
+        let child = URL(string: root.text.components(separatedBy: .newlines).first { $0.hasPrefix("http://127.0.0.1:") }!)!
+        let media = await session.response(path: child.path)
+        precondition(root.status == 200 && media.status == 200)
+        precondition(media.text.contains("advertisement"), "Twitch ad blocking never filters Kick media")
+        precondition(media.text.contains("https://test.hls.live-video.net/101.ts"))
+        precondition(media.text.contains("#EXT-X-PREFETCH:") == !enabled)
+        precondition(media.text.components(separatedBy: "#EXTINF:").count == (enabled ? 3 : 2))
+        precondition(!media.text.contains("127.0.0.1"), "Media goes directly to the CDN without whole-segment proxy buffering")
+        precondition(PlaybackProtocol.count == 2)
+        let waiting = await session.waiting
+        precondition(!waiting)
+        for address in ["https://video.ttvnw.net/foreign.m3u8", "https://test.playlist.live-video.net.evil.example/foreign.m3u8",
+          "http://test.playlist.live-video.net/foreign.m3u8", "https://user:password@test.playlist.live-video.net/foreign.m3u8"] {
+          let invalid = await session.route(URL(string: address)!, port: 12345)
+          let rejected = await session.response(path: invalid.path)
+          precondition(rejected.status == 502 && PlaybackProtocol.count == 2, "Reject invalid provider URLs before making a request")
+        }
+        await session.stop()
+      }
+      print("Passed Kick gateway toggles, master routing, direct media, provider isolation, and URL-validation regressions")
     }
 
     let player = #"{"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"video"},"streamingData":{"hlsManifestUrl":"https://manifest.googlevideo.com/master.m3u8"}}"#

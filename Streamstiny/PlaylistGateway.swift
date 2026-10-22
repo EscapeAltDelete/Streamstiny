@@ -1,10 +1,10 @@
 import Foundation
 @preconcurrency import Network
 
-// Only manifests cross loopback. Media, maps and keys stay on Twitch's CDN.
-@MainActor final class TwitchPlaylistGateway {
+// Only manifests cross loopback. Media, maps and keys stay on the provider's CDN.
+@MainActor final class PlaylistGateway {
   private let listener: NWListener
-  private let session: TwitchPlaylistSession
+  private let session: PlaylistSession
   private var ready: CheckedContinuation<Void, Error>?
   private var requests: [UUID: Task<Void, Never>] = [:]
   private(set) var port: UInt16 = 0
@@ -14,10 +14,10 @@ import Foundation
     let parameters = NWParameters.tcp
     parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
     listener = try NWListener(using: parameters)
-    session = TwitchPlaylistSession(source: source, variants: variants, resolver: resolver)
+    session = PlaylistSession(source: source, variants: variants, resolver: resolver)
   }
-  static func start(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver) async throws -> TwitchPlaylistGateway {
-    let server = try TwitchPlaylistGateway(source: source, variants: variants, resolver: resolver)
+  static func start(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver) async throws -> PlaylistGateway {
+    let server = try PlaylistGateway(source: source, variants: variants, resolver: resolver)
     try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         server.ready = continuation
@@ -40,7 +40,7 @@ import Foundation
             if let server { server.accept(connection) } else { connection.cancel() }
           }
         }
-        server.listener.start(queue: DispatchQueue(label: "Streamstiny.TwitchPlaylists"))
+        server.listener.start(queue: DispatchQueue(label: "Streamstiny.Playlists"))
       }
     } onCancel: { server.listener.cancel() }
     return server
@@ -102,13 +102,13 @@ import Foundation
   deinit { listener.cancel() }
 }
 
-actor TwitchPlaylistSession {
+actor PlaylistSession {
   private let source: StreamSource
   private let variants: [HLSVariant]
   private let resolver: PlaybackResolver
   private let network: URLSession
-  private let blockAds = UserDefaults.standard.bool(forKey: "twitchAdBlocking")
-  private let lowLatency = UserDefaults.standard.bool(forKey: "twitchLowLatency")
+  private let blockAds: Bool
+  private let lowLatency: Bool
   private var routes: [String: URL] = [:]
   private var paths: [URL: String] = [:]
   private var port: UInt16 = 0
@@ -124,10 +124,14 @@ actor TwitchPlaylistSession {
   init(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver,
     configuration: URLSessionConfiguration = .ephemeral) {
     self.source = source; self.variants = variants; self.resolver = resolver
+    blockAds = source.provider == .twitch && UserDefaults.standard.bool(forKey: "twitchAdBlocking")
+    lowLatency = HLSLowLatency.enabled(for: source.provider)
     let config = configuration
     config.timeoutIntervalForRequest = 3
     config.httpMaximumConnectionsPerHost = 4
-    config.httpAdditionalHeaders = TwitchResolver.mediaHeaders
+    config.httpAdditionalHeaders = source.provider == .twitch ? TwitchResolver.mediaHeaders : [
+      "User-Agent": PlaybackResolver.userAgent, "Origin": "https://kick.com", "Referer": "https://kick.com/",
+    ]
     network = URLSession(configuration: config)
   }
   func route(_ url: URL, port: UInt16) -> URL {
@@ -148,22 +152,28 @@ actor TwitchPlaylistSession {
     return result
   }
   private func fetch(_ url: URL) async throws -> (String, URL) {
-    guard Self.allowed(url) else { throw URLError(.unsupportedURL) }
+    guard allowed(url) else { throw URLError(.unsupportedURL) }
     let (data, response) = try await network.data(from: url)
     try Task.checkCancellation()
     guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-      data.count <= 2 * 1024 * 1024, let final = http.url, Self.allowed(final) else { throw URLError(.badServerResponse) }
+      data.count <= 2 * 1024 * 1024, let final = http.url, allowed(final) else { throw URLError(.badServerResponse) }
     let text = String(decoding: data, as: UTF8.self)
     guard text.hasPrefix("#EXTM3U") else { throw URLError(.cannotDecodeContentData) }
-    return (lowLatency ? TwitchLowLatency.expand(text) : text, final)
+    return (lowLatency ? HLSLowLatency.expand(text, provider: source.provider) : text, final)
   }
-  private static func allowed(_ url: URL) -> Bool {
+  private func allowed(_ url: URL) -> Bool {
     guard url.scheme == "https", url.user == nil, url.password == nil, let host = url.host?.lowercased() else { return false }
-    return ["ttvnw.net", "jtvnw.net", "twitchcdn.net"].contains { host == $0 || host.hasSuffix("." + $0) }
+    let domains: [String]
+    switch source.provider {
+    case .twitch: domains = ["ttvnw.net", "jtvnw.net", "twitchcdn.net"]
+    case .kick: domains = ["playback.live-video.net", "playlist.live-video.net", "hls.live-video.net"]
+    default: return false
+    }
+    return domains.contains { host == $0 || host.hasSuffix("." + $0) }
   }
   private func absolute(_ text: String, base: URL, localPlaylists: Bool) -> String {
     func address(_ value: String) -> String {
-      guard let remote = URL(string: value, relativeTo: base)?.absoluteURL, Self.allowed(remote) else { return value }
+      guard let remote = URL(string: value, relativeTo: base)?.absoluteURL, allowed(remote) else { return value }
       return localPlaylists && remote.pathExtension.lowercased() == "m3u8" ? route(remote, port: port).absoluteString : remote.absoluteString
     }
     return text.components(separatedBy: .newlines).map { line in
