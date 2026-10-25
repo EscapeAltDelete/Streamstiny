@@ -130,10 +130,9 @@ actor PlaybackResolver {
       return try media(json["playback_url"] as? String)
     case .angelthump:
       let data = try await fetch("https://api.angelthump.com/v3/streams?username=\(source.key)")
-      let streams = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] ?? []
-      guard let stream = streams.first, stream["type"] as? String == "live" else {
-        throw PlaybackFailure.offline
-      }
+      guard let streams = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { throw PlaybackFailure.unavailable }
+      guard let stream = streams.first else { throw PlaybackFailure.offline }
+      guard stream["type"] as? String == "live" else { throw PlaybackFailure.unavailable }
       let user = stream["user"] as? [String: Any] ?? [:]
       guard user["password_protect"] as? Bool != true, user["banned"] as? Bool != true else {
         throw PlaybackFailure.restricted

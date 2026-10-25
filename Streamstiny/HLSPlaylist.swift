@@ -8,6 +8,7 @@ struct HLSVariant: Identifiable, Equatable, Sendable {
   let frameRate: Double
   let externalMedia: Bool
   var codecs: String = ""
+  var averageBandwidth: Double? = nil
   var isSource: Bool { width == 0 && height == 0 }
   var isPortrait: Bool { height > width }
   var id: String { "\(width)x\(height):\(Int(frameRate.rounded())):\(externalMedia):\(codecs)" }
@@ -61,6 +62,7 @@ enum HLSPlaylist {
       let sourceVideo = dimensions == [0, 0] && fields["VIDEO"] != nil
       let bandwidth = Double(fields["BANDWIDTH"] ?? "") ?? 0
       let frameRate = Double(fields["FRAME-RATE"] ?? "") ?? 0
+      let average = Double(fields["AVERAGE-BANDWIDTH"] ?? "")
       guard dimensions.count == 2,
         sourceVideo || dimensions.allSatisfy({ $0 > 0 && $0 <= 16_384 }),
         bandwidth.isFinite, bandwidth >= 0, bandwidth <= 1_000_000_000,
@@ -74,7 +76,8 @@ enum HLSPlaylist {
       let variant = HLSVariant(
         url: url, width: dimensions[0], height: dimensions[1],
         bandwidth: bandwidth,
-        frameRate: frameRate, externalMedia: external, codecs: fields["CODECS"] ?? "")
+        frameRate: frameRate, externalMedia: external, codecs: fields["CODECS"] ?? "",
+        averageBandwidth: average.flatMap { $0.isFinite && $0 > 0 && $0 <= 1_000_000_000 ? $0 : nil })
       if seen.insert(variant.id).inserted { result.append(variant) }
     }
     return result.sorted {
@@ -95,6 +98,7 @@ enum HLSLowLatency {
     case .twitch: return UserDefaults.standard.bool(forKey: "twitchLowLatency")
     case .kick: return UserDefaults.standard.bool(forKey: "kickLowLatency")
     case .youtube: return UserDefaults.standard.bool(forKey: "youtubeLowLatency")
+    case .angelthump: return UserDefaults.standard.bool(forKey: "angelthumpLowLatency")
     default: return false
     }
   }

@@ -35,7 +35,7 @@ for path in names:
       let refreshStarted = ProcessInfo.processInfo.systemUptime
       defer { ChatBenchmarkMetrics.refreshTimes.append((ProcessInfo.processInfo.systemUptime - refreshStarted) * 1000) }""", 1)
     if include_player and path.name == "PlayerView.swift":
-        text = text.replace("        let value = !reportsBitrate", "        if reportsBitrate { ChatBenchmarkMetrics.bitrateSamples += 1 }\n        let value = !reportsBitrate")
+        text = text.replace("            bitrateInput = input", "            ChatBenchmarkMetrics.bitrateSamples += 1\n            bitrateInput = input")
     (source / path.name).write_text(text)
 host = Path("Benchmarks/Chat/Host.swift").read_text()
 if include_player:

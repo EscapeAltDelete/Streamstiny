@@ -11,6 +11,7 @@ import UIKit
   private var processorMonitor: AudioOutputMonitor?
   private var nextAudioRecovery = 0.0
   private(set) var error: Error?
+  private(set) var finished = false
 
   init(
     url: URL, variant: HLSVariant?, headers: [String: String], provider: StreamSource.Provider, playing: Bool, changed: @escaping () -> Void
@@ -34,6 +35,7 @@ import UIKit
   }
 
   func start() {
+    finished = false
     engine.prepareToPlay()
     startTicking()
   }
@@ -124,6 +126,7 @@ import UIKit
   func changeBuffering(player: some MediaPlayerProtocol, progress: Int) { changed?() }
   func playBack(player: some MediaPlayerProtocol, loopCount: Int) { changed?() }
   func finish(player: some MediaPlayerProtocol, error: Error?) {
+    finished = true
     self.error = error
     ticking?.cancel()
     ticking = nil

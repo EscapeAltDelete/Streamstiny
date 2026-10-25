@@ -214,13 +214,19 @@ import ImageIO
   }
 
   func testReportedEmotesAnimateInChat() async throws {
+    for cold in [true, false] { try await verifyReportedEmotes(cold: cold) }
+  }
+  private func verifyReportedEmotes(cold: Bool) async throws {
     let store = EmoteStore()
+    if cold { await store.clearBenchmarkCache() }
     await store.load(force: true)
-    let names = ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH"]
+    let names = ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH", "COKEJAW"]
     XCTAssertTrue(Set(names).isSubset(of: Set(store.catalog.keys)), "Authoritative catalog unavailable: \(store.status ?? "none")")
     let feed = Feed()
-    feed.messages = names.enumerated().map { index, name in
-      ChatMessage(payload: ["uuid": "reported-\(index)", "nick": "Benchmark", "data": name, "roles": ["PROTECTED"]])
+    feed.messages = try names.enumerated().map { index, name in
+      let payload = try JSONSerialization.data(withJSONObject: ["uuid": "reported-\(index)", "nick": "Benchmark", "data": name])
+      guard case .message(let message) = try ChatProtocol.decode("MSG " + String(decoding: payload, as: UTF8.self)) else { throw URLError(.cannotParseResponse) }
+      return message
     }
     let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
     let controller = UIHostingController(rootView: Timeline(feed: feed, emotes: store))
@@ -230,7 +236,7 @@ import ImageIO
     var visible = false
     for _ in 0..<100 {
       controller.view.layoutIfNeeded()
-      visible = try await javascript(web, "return document.querySelectorAll('.emote').length===4 && [...document.querySelectorAll('.emote')].every(n=>n.getBoundingClientRect().height>0);")
+      visible = try await javascript(web, "return document.querySelectorAll('.emote').length===5 && [...document.querySelectorAll('.emote')].every(n=>n.getBoundingClientRect().height>0);")
       if visible { break }
       try await Task.sleep(for: .milliseconds(20))
     }
@@ -258,14 +264,14 @@ import ImageIO
       try await Task.sleep(for: .milliseconds(150))
     }
     for name in names { XCTAssertGreaterThan(hashes[name]!.count, 1, "\(name) must show changing image pixels") }
-    print("REPORTED_EMOTES " + String(decoding: try JSONSerialization.data(withJSONObject: hashes.mapValues(\.count)), as: UTF8.self))
+    print("REPORTED_EMOTES_\(cold ? "COLD" : "WARM") " + String(decoding: try JSONSerialization.data(withJSONObject: hashes.mapValues(\.count)), as: UTF8.self))
   }
 
   func testAVIFContainerDiagnosis() async throws {
     let store = EmoteStore()
     await store.load(force: true)
     var results: [[String: Any]] = []
-    for name in ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH"] {
+    for name in ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH", "COKEJAW"] {
       let url = try XCTUnwrap(store.catalog[name])
       var request = URLRequest(url: url)
       request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")

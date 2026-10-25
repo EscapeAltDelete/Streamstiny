@@ -134,6 +134,13 @@ enum PlaybackResolverTests {
       } catch PlaybackFailure.offline {}
       precondition(PlaybackProtocol.count == 1)
     }
+    for body in [#"{"error":"temporarily unavailable"}"#, #"[{"error":"upstream unavailable"}]"#] {
+      PlaybackProtocol.prepare(["api.angelthump.com/v3/streams": (200, body)])
+      do {
+        _ = try await resolver.resolve(StreamSource(provider: .angelthump, key: "channel"))
+        preconditionFailure("Malformed provider state must remain recoverable")
+      } catch PlaybackFailure.unavailable {}
+    }
     PlaybackProtocol.prepare(["api.angelthump.com/v3/streams": (200, #"[{"type":"live","user":{"password_protect":true}}]"#)])
     do {
       _ = try await resolver.resolve(StreamSource(provider: .angelthump, key: "channel"))

@@ -7,11 +7,17 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack {
       List {
+        NavigationLink { ChatLayoutPreferencesView() } label: {
+          Label("General", systemImage: "gearshape")
+        }
         NavigationLink { PlaybackPreferencesView() } label: {
-          Label("Playback", systemImage: "play.circle")
+          Label("Player", systemImage: "play.circle")
         }
         NavigationLink { ChatPreferencesView(chat: chat) } label: {
           Label("Chat", systemImage: "bubble.left.and.bubble.right")
+        }
+        NavigationLink { NotificationPreferencesView(chat: chat) } label: {
+          Label("Notifications", systemImage: "bell")
         }
         NavigationLink { AccountPreferencesView(chat: chat) } label: {
           Label("Accounts", systemImage: "person.crop.circle")
@@ -31,6 +37,7 @@ struct PlaybackPreferencesView: View {
   @AppStorage("twitchLowLatency") private var twitchLowLatency = false
   @AppStorage("kickLowLatency") private var kickLowLatency = false
   @AppStorage("youtubeLowLatency") private var youtubeLowLatency = false
+  @AppStorage("angelthumpLowLatency") private var angelthumpLowLatency = false
   @AppStorage("twitchAdBlocking") private var twitchAdBlocking = false
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
@@ -64,26 +71,17 @@ struct PlaybackPreferencesView: View {
       } header: { Text("YouTube") } footer: {
         Text("Experimental. Starts at the newest available live segment and may buffer more. YouTube's broadcast latency still applies.")
       }
-      Section("Player") {
+      Section {
+        Toggle("Low latency", isOn: $angelthumpLowLatency)
+      } header: { Text("AngelThump") } footer: {
+        Text("Starts closer to the live edge using completed segments. This is not early-segment streaming and may buffer more on slower connections.")
+      }
+      Section("Stream information") {
         Toggle("Show Bitrate", isOn: $showBitrate)
         Toggle("Show DGG viewers", isOn: $showDGGViewers)
         Toggle("Show overall stream viewers", isOn: $showViewers)
       }
-    }.navigationTitle("Playback").navigationBarTitleDisplayMode(.inline)
-  }
-}
-
-private struct ChatPreferencesView: View {
-  let chat: ChatStore
-  var body: some View {
-    List {
-      NavigationLink { ChatLayoutPreferencesView() } label: {
-        Label("Layout", systemImage: "rectangle.split.2x1")
-      }
-      NavigationLink { ChatMessagePreferencesView(chat: chat) } label: {
-        Label("Messages", systemImage: "text.bubble")
-      }
-    }.listStyle(.insetGrouped).navigationTitle("Chat").navigationBarTitleDisplayMode(.inline)
+    }.navigationTitle("Player").navigationBarTitleDisplayMode(.inline)
   }
 }
 
@@ -93,11 +91,13 @@ private struct ChatLayoutPreferencesView: View {
   @AppStorage("chatFraction") private var chatFraction = 0.36
   var body: some View {
     Form {
-      Picker("Landscape chat position", selection: $chatOnLeft) {
-        Text("Left").tag(true)
-        Text("Right").tag(false)
+      Section("Landscape layout") {
+        Picker("Chat position", selection: $chatOnLeft) {
+          Text("Left").tag(true)
+          Text("Right").tag(false)
+        }
+        Toggle("Overlay chat", isOn: $chatOverlay).accessibilityIdentifier("chatOverlay")
       }
-      Toggle("Overlay chat in landscape", isOn: $chatOverlay).accessibilityIdentifier("chatOverlay")
       Section {
         LabeledContent("Landscape chat size", value: "\(Int((chatFraction * 100).rounded()))%")
         Slider(value: $chatFraction, in: 0.25...0.65, step: 0.01) { Text("Chat size") }
@@ -105,11 +105,11 @@ private struct ChatLayoutPreferencesView: View {
       } footer: {
         Text("In portrait, chat fills the space below the video regardless of this limit.")
       }
-    }.navigationTitle("Chat layout").navigationBarTitleDisplayMode(.inline)
+    }.navigationTitle("General").navigationBarTitleDisplayMode(.inline)
   }
 }
 
-private struct ChatMessagePreferencesView: View {
+private struct ChatPreferencesView: View {
   let chat: ChatStore
   @AppStorage("fontSize") private var fontSize = 15.0
   @AppStorage("timestamps") private var timestamps = false
@@ -125,8 +125,6 @@ private struct ChatMessagePreferencesView: View {
   @AppStorage("censoredChatWords") private var censoredWords = "fuck, shit, cunt"
   @AppStorage("showWhispersInChat") private var showWhispers = false
   @AppStorage("removedChatMessages") private var removedMessages = 1
-  @AppStorage("notifyChatWhispers") private var notifyWhispers = false
-  @AppStorage("notifyChatMentions") private var notifyMentions = false
   @AppStorage("previewChatImages") private var previewImages = false
   @AppStorage("harshIgnore") private var harshIgnore = false
   @AppStorage("chatAutocomplete") private var autocomplete = true
@@ -137,45 +135,41 @@ private struct ChatMessagePreferencesView: View {
   @State private var syncing = false
   var body: some View {
     Form {
-      Toggle("Show timestamps", isOn: $timestamps)
-      Toggle("Highlight mentions of me", isOn: Binding(get: { !disableMentionHighlight }, set: { disableMentionHighlight = !$0 }))
-      Toggle("Show badges", isOn: Binding(get: { !hideFlairIcons }, set: { hideFlairIcons = !$0 }))
-      Toggle("Show typing suggestions", isOn: $autocomplete)
-      Toggle("Highlight tagged users", isOn: $highlightTags)
-      Toggle("Focus messages mentioning me", isOn: $focusMentions)
-      Toggle("Disable emote animations", isOn: $disableEmoteAnimations)
-      Toggle("Disable emote combos", isOn: $disableEmoteCombos)
-      Toggle("Show whispers in public chat", isOn: $showWhispers)
-      Toggle("Hide messages mentioning ignored users", isOn: $harshIgnore)
-      Picker("Deleted messages", selection: $removedMessages) {
-        Text("Hide").tag(0)
-        Text("Show placeholder").tag(1)
-        Text("Show original text").tag(2)
+      Section("Appearance") {
+        Toggle("Show timestamps", isOn: $timestamps)
+        Toggle("Show badges", isOn: Binding(get: { !hideFlairIcons }, set: { hideFlairIcons = !$0 }))
+        LabeledContent("Text size", value: "\(Int(fontSize))")
+        Slider(value: $fontSize, in: 12...26, step: 1) { Text("Text size") }
       }
-      TextField("Highlight words, separated by commas", text: $customHighlights)
+      Section("Messages") {
+        Toggle("Highlight mentions of me", isOn: Binding(get: { !disableMentionHighlight }, set: { disableMentionHighlight = !$0 }))
+        Toggle("Highlight tagged users", isOn: $highlightTags)
+        Toggle("Focus messages mentioning me", isOn: $focusMentions)
+        TextField("Highlight words, separated by commas", text: $customHighlights)
+        Picker("Deleted messages", selection: $removedMessages) {
+          Text("Hide").tag(0)
+          Text("Show placeholder").tag(1)
+          Text("Show original text").tag(2)
+        }
+        Stepper("Keep \(maximumChatMessages) messages", value: $maximumChatMessages, in: 100...5000, step: 100)
+          .onChange(of: maximumChatMessages) { _, count in chat.setMaximumMessages(count) }
+      }
+      Section("Emotes") {
+        Toggle("Animate emotes", isOn: Binding(get: { !disableEmoteAnimations }, set: { disableEmoteAnimations = !$0 }))
+        Toggle("Combine repeated emotes", isOn: Binding(get: { !disableEmoteCombos }, set: { disableEmoteCombos = !$0 }))
+      }
+      Section("Interaction") {
+        Toggle("Show typing suggestions", isOn: $autocomplete)
+        Toggle("Show whispers in public chat", isOn: $showWhispers)
+        Toggle("Hide messages mentioning ignored users", isOn: $harshIgnore)
+        Button("Clear ignored users (\(chat.ignored.count))") { chat.clearIgnored() }
+      }
       Section("Links and language") {
         Toggle("Load image previews", isOn: $previewImages)
         Toggle("Hide links marked NSFW", isOn: $hideNSFW)
         Toggle("Hide links marked NSFL", isOn: $hideNSFL)
         Toggle("Censor words", isOn: $censorWords)
         if censorWords { TextField("Words to censor, separated by commas", text: $censoredWords) }
-      }
-      Section {
-        Toggle("Notify for whispers", isOn: $notifyWhispers)
-        Toggle("Notify for mentions", isOn: $notifyMentions)
-      } header: { Text("Notifications") } footer: {
-        Text("Notifications arrive while Streamstiny is active. Chat pauses in the background.")
-      }
-      .onChange(of: notifyWhispers || notifyMentions) { _, enabled in
-        if enabled {
-          Task {
-            do {
-              if try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) == false {
-                notifyWhispers = false; notifyMentions = false
-              }
-            } catch { syncResult = error.localizedDescription }
-          }
-        }
       }
       if DestinyAccount.hasSession {
         Section("Website settings") {
@@ -189,17 +183,9 @@ private struct ChatMessagePreferencesView: View {
           if let syncResult { Text(syncResult).font(.caption) }
         }
       }
-      Stepper("Keep \(maximumChatMessages) messages", value: $maximumChatMessages, in: 100...5000, step: 100)
-        .onChange(of: maximumChatMessages) { _, count in chat.setMaximumMessages(count) }
-      Section {
-        LabeledContent("Text size", value: "\(Int(fontSize))")
-        Slider(value: $fontSize, in: 12...26, step: 1) { Text("Text size") }
-      }
-      Section {
-        Button("Clear ignored users (\(chat.ignored.count))") { chat.clearIgnored() }
-      }
-    }.navigationTitle("Messages").navigationBarTitleDisplayMode(.inline)
+    }.navigationTitle("Chat").navigationBarTitleDisplayMode(.inline)
       .onDisappear {
+        chat.settingsChanged()
         if automaticSync, DestinyAccount.hasSession, chat.identity != nil {
           Task {
             do { try await ChatPreferences.save(from: chat) }
@@ -216,6 +202,45 @@ private struct ChatMessagePreferencesView: View {
         if save { try await ChatPreferences.save(from: chat) } else { try await ChatPreferences.load(into: chat) }
         syncResult = save ? "Website settings saved." : "Website settings loaded."
       } catch { syncResult = error.localizedDescription }
+    }
+  }
+}
+
+private struct NotificationPreferencesView: View {
+  let chat: ChatStore
+  @AppStorage("notifyChatWhispers") private var notifyWhispers = false
+  @AppStorage("notifyChatMentions") private var notifyMentions = false
+  @State private var failure: String?
+  var body: some View {
+    Form {
+      Section {
+        Toggle("Whispers", isOn: $notifyWhispers)
+        Toggle("Mentions", isOn: $notifyMentions)
+      } header: { Text("Chat alerts") } footer: {
+        Text("Notifications arrive while Streamstiny is active. Chat pauses in the background.")
+      }
+      if let failure { Text(failure).foregroundStyle(.secondary) }
+    }
+    .navigationTitle("Notifications").navigationBarTitleDisplayMode(.inline)
+    .onChange(of: notifyWhispers || notifyMentions) { _, enabled in
+      if enabled {
+        Task {
+          do {
+            if try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) == false {
+              notifyWhispers = false; notifyMentions = false
+              failure = "Notifications are disabled in iOS Settings."
+            }
+          } catch { failure = error.localizedDescription }
+        }
+      }
+    }
+    .onDisappear {
+      if ChatPreferences.automaticSync, DestinyAccount.hasSession, chat.identity != nil {
+        Task {
+          do { try await ChatPreferences.save(from: chat) }
+          catch is CancellationError {} catch { chat.error = "Website settings: " + error.localizedDescription }
+        }
+      }
     }
   }
 }

@@ -13,7 +13,7 @@ import SwiftUI
   var buffering: Bool { status == .buffering || status == .recovering }
   var playing: Bool { status == .playing }
   var error: String? { status.error }
-  private var pipelineFailed: Bool { hls?.error != nil || hls?.engine.playbackState == .finished }
+  private var pipelineFailed: Bool { hls?.finished == true }
   private(set) var variants: [HLSVariant] = []
   private(set) var qualityID: String?
   private(set) var edge: AngelEdge?
@@ -23,7 +23,11 @@ import SwiftUI
   private(set) var resolution = ""
   private(set) var bitrate: StreamBitrate?
   private var reportsBitrate = false
+  private var informationVisible = false
   private var nextBitrateCheck = 0.0
+  @ObservationIgnored private var bitrateInput: StreamBitrate.Input?
+  @ObservationIgnored private var bitrateTask: Task<Void, Never>?
+  private(set) var frameRate: Float = 0
   private(set) var buffered = 0.0
   private(set) var waitingForAds = false
   private(set) var catchingUp = false
@@ -64,7 +68,7 @@ import SwiftUI
   private var wantsPlayback = true
   private var commands: [PlaybackCommandTarget] = []
 
-  deinit { network?.cancel(); retry?.cancel(); stall?.cancel() }
+  deinit { network?.cancel(); retry?.cancel(); stall?.cancel(); bitrateTask?.cancel() }
 
   var pipActive: Bool { hls?.engine.pipController?.isPictureInPictureActive == true }
 
@@ -107,7 +111,8 @@ import SwiftUI
     if wantsPlayback { monitorNetwork() }
     title = source.title
     status = .connecting
-    bitrate = nil
+    clearBitrate()
+    frameRate = 0
     nextBitrateCheck = 0
     healthySince = nil
     if !force {
@@ -229,11 +234,18 @@ import SwiftUI
     targetBuffer = target.isFinite ? min(20, max(0, target)) : 3
     highestQuality = highest
     reportsBitrate = showBitrate
-    if !showBitrate { bitrate = nil }
+    if !showBitrate { clearBitrate() }
     nextBitrateCheck = 0
     nextBufferCheck = 0
     if changedQuality { selectPreferredQuality() }
     updateTime()
+  }
+
+  func setInformationVisible(_ visible: Bool) {
+    informationVisible = visible
+    nextBitrateCheck = 0
+    if !visible { clearBitrate() }
+    else { updateTime() }
   }
 
   private func selectPreferredQuality() {
@@ -286,7 +298,7 @@ import SwiftUI
     let change = selectionVersion
     let version = generation
     switching = true
-    bitrate = nil
+    clearBitrate()
     nextBitrateCheck = 0
     settingsError = nil
     selection = Task { [weak self] in
@@ -375,8 +387,9 @@ import SwiftUI
     waitingForAds = false
     playbackRate = 0
     resolution = ""
-    bitrate = nil
+    clearBitrate()
     buffered = 0
+    frameRate = 0
     settingsError = nil
     title = ""
     wantsPlayback = false
@@ -393,7 +406,7 @@ import SwiftUI
   private func streamEnded() {
     stopNetworkMonitor()
     status = .ended
-    bitrate = nil
+    clearBitrate()
     wantsPlayback = false
     endCatchUp()
     setAutomaticCatchUp(false)
@@ -428,7 +441,7 @@ import SwiftUI
     }
     guard PlaybackStatus.retryDelay(attempt: failures) != nil, let source else {
       status = .unavailable("Video playback is temporarily unavailable after refreshing its source. Retry to reconnect.")
-      bitrate = nil
+      clearBitrate()
       hls?.pause()
       return
     }
@@ -451,7 +464,7 @@ import SwiftUI
         return
       }
       if status.error == nil { status = .unavailable("Video playback is temporarily unavailable after refreshing its source. Retry to reconnect.") }
-      bitrate = nil
+      clearBitrate()
       hls?.pause()
     }
   }
@@ -483,13 +496,23 @@ import SwiftUI
       playbackRate = playing ? engine.playbackRate : 0
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
-      if reportsBitrate, !loading, !switching, ProcessInfo.processInfo.systemUptime >= nextBitrateCheck {
+      if informationVisible, !loading, !switching, engine.isReadyToPlay,
+        ProcessInfo.processInfo.systemUptime >= nextBitrateCheck {
         nextBitrateCheck = ProcessInfo.processInfo.systemUptime + 1
         let video = engine.tracks(mediaType: .video).first { $0.isEnabled }
-        let track = video ?? engine.tracks(mediaType: .audio).first { $0.isEnabled }
-        // A spliced ad-free backup can differ from the master's bitrate metadata.
-        let value = playlistGateway?.usingBackup == true ? nil : track.flatMap { StreamBitrate($0.bitRate, audioOnly: video == nil) }
-        if bitrate != value { bitrate = value }
+        if frameRate != (video?.nominalFrameRate ?? 0) { frameRate = video?.nominalFrameRate ?? 0 }
+        if reportsBitrate, playlistGateway?.usingBackup != true, let video {
+          let input = StreamBitrate.Input(variants: variants, selectedID: qualityID,
+            width: Int(size.width), height: Int(size.height), frameRate: Double(video.nominalFrameRate), trackBitrate: video.bitRate)
+          if input != bitrateInput {
+            bitrateInput = input
+            bitrateTask?.cancel()
+            bitrateTask = Task.detached(priority: .utility) { [weak self] in
+              let value = input.value
+              await self?.acceptBitrate(value, input: input)
+            }
+          }
+        } else { clearBitrate() }
       }
       if let controller = engine.pipController, controller.delegate !== self {
         controller.delegate = self
@@ -504,6 +527,17 @@ import SwiftUI
     }
     adjustAutomaticCatchUp()
     updateNowPlaying()
+  }
+
+  private func clearBitrate() {
+    bitrateTask?.cancel(); bitrateTask = nil
+    bitrateInput = nil
+    bitrate = nil
+  }
+  private func acceptBitrate(_ value: StreamBitrate?, input: StreamBitrate.Input) {
+    guard !Task.isCancelled, informationVisible, reportsBitrate, bitrateInput == input else { return }
+    bitrateTask = nil
+    if bitrate != value { bitrate = value }
   }
 
   private func updateNowPlaying() {
@@ -624,6 +658,7 @@ struct PlayerView: View {
   @AppStorage("twitchLowLatency") private var twitchLowLatency = false
   @AppStorage("kickLowLatency") private var kickLowLatency = false
   @AppStorage("youtubeLowLatency") private var youtubeLowLatency = false
+  @AppStorage("angelthumpLowLatency") private var angelthumpLowLatency = false
   @AppStorage("automaticCatchUp") private var automaticCatchUp = false
   @AppStorage("targetBuffer") private var targetBuffer = 3.0
   @AppStorage("highestQuality") private var highestQuality = false
@@ -661,13 +696,6 @@ struct PlayerView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           .padding(.leading, 8).padding(.top, controls.visible ? 60 : 8)
       }
-      if showBitrate {
-        Text(playback.bitrate?.label ?? "Bitrate unavailable").font(.caption2.monospacedDigit())
-          .padding(.horizontal, 8).padding(.vertical, 4)
-          .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white).allowsHitTesting(false)
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-          .padding(.leading, 8).padding(.bottom, controls.visible ? 64 : 8)
-      }
       if let message = blocked ?? playback.error {
         VStack(spacing: 12) {
           Image(systemName: "play.slash").font(.title)
@@ -679,7 +707,7 @@ struct PlayerView: View {
     }
     .animation(.easeOut(duration: 0.12), value: controls.visible)
     .background(.black)
-    .sheet(isPresented: $controls.settingsPresented) { PlaybackSettings(playback: playback) }
+    .sheet(isPresented: $controls.settingsPresented) { PlaybackSettings(playback: playback, source: source, library: library) }
     .task(id: source.id + (blocked ?? "")) {
       configurePlayback()
       if blocked == nil { await playback.load(source) } else { playback.stop() }
@@ -692,6 +720,9 @@ struct PlayerView: View {
     }
     .onChange(of: youtubeLowLatency) { _, _ in
       if source.provider == .youtube { playback.reload() }
+    }
+    .onChange(of: angelthumpLowLatency) { _, _ in
+      if source.provider == .angelthump { playback.reload() }
     }
     .onChange(of: automaticCatchUp) { _, _ in configurePlayback() }
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }
@@ -761,8 +792,11 @@ struct PlayerView: View {
   }
 }
 
-private struct PlaybackSettings: View {
+struct PlaybackSettings: View {
   let playback: NativePlayback
+  let source: StreamSource
+  let library: StreamLibrary
+  @AppStorage("showBitrate") private var showBitrate = false
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     NavigationStack {
@@ -779,7 +813,17 @@ private struct PlaybackSettings: View {
           }
         }
         Section("Now playing") {
+          if let count = library.viewerCount(for: source) { LabeledContent("Viewers", value: count.formatted()) }
+          if let count = library.dggViewerCount(for: source) { LabeledContent("DGG viewers", value: count.formatted()) }
+          LabeledContent("Quality", value: playback.variants.first { $0.id == playback.qualityID }?.label ?? "Automatic")
           if !playback.resolution.isEmpty { LabeledContent("Playing", value: playback.resolution) }
+          if playback.frameRate > 0 { LabeledContent("Framerate", value: playback.frameRate.formatted(.number.precision(.fractionLength(0...2))) + " fps") }
+          if showBitrate {
+            LabeledContent(playback.bitrate?.title ?? "Advertised stream bitrate", value: playback.bitrate?.label ?? "Unavailable")
+              .accessibilityIdentifier("streamBitrate")
+            Text("Playlist bandwidth, including audio and container overhead.")
+              .font(.caption).foregroundStyle(.secondary)
+          }
           LabeledContent("Buffered", value: playback.buffered.formatted(.number.precision(.fractionLength(1))) + " s")
           Button { playback.reload() } label: { Label("Reload stream", systemImage: "arrow.clockwise") }
         }
@@ -789,6 +833,8 @@ private struct PlaybackSettings: View {
       .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
     }
     .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
+    .onAppear { playback.setInformationVisible(true) }
+    .onDisappear { playback.setInformationVisible(false) }
   }
 
   private var resolutionSettings: some View {

@@ -2,7 +2,7 @@ import Foundation
 
 enum LowLatencyTests {
   static func run() {
-    let keys = ["twitchLowLatency", "kickLowLatency", "youtubeLowLatency"]
+    let keys = ["twitchLowLatency", "kickLowLatency", "youtubeLowLatency", "angelthumpLowLatency"]
     let previous = keys.map { UserDefaults.standard.object(forKey: $0) }
     defer { for (key, value) in zip(keys, previous) { UserDefaults.standard.set(value, forKey: key) } }
     UserDefaults.standard.set(false, forKey: "youtubeLowLatency")
@@ -16,6 +16,10 @@ enum LowLatencyTests {
     UserDefaults.standard.set(true, forKey: "youtubeLowLatency")
     precondition(HLSLowLatency.enabled(for: .youtube) && HLSLowLatency.enabled(for: .kick))
     precondition(!HLSLowLatency.enabled(for: .twitch) && !HLSLowLatency.enabled(for: .direct))
+    for enabled in [false, true] {
+      UserDefaults.standard.set(enabled, forKey: "angelthumpLowLatency")
+      precondition(HLSLowLatency.enabled(for: .angelthump) == enabled)
+    }
     let complete = """
       #EXTM3U
       #EXT-X-TARGETDURATION:6
@@ -34,6 +38,7 @@ enum LowLatencyTests {
     precondition(playlist.segments.suffix(2).map { $0.lines.last! } == ["102.ts", "103.ts"])
     precondition(!expanded.contains("#EXT-X-PREFETCH:"))
     precondition(HLSLowLatency.expand(input, provider: .youtube) == input)
+    precondition(HLSLowLatency.expand(input, provider: .angelthump) == input, "AngelThump must not acquire unverified prefetch support")
     precondition(HLSLowLatency.expand(input, provider: .twitch) == input, "Provider tags must not be confused")
     precondition(HLSLowLatency.expand(complete, provider: .kick) == complete)
     let duplicate = HLSLowLatency.expand(complete + "#EXT-X-PREFETCH:101.ts\n" + pending + pending, provider: .kick)
