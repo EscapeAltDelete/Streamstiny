@@ -115,6 +115,7 @@ struct TwitchAdTimeline {
   private var targetDuration = 1
   private var lastOutput: String?
   private(set) var waiting = false
+  var usingBackup: Bool { currentOrigin != nil && currentOrigin != "primary" }
 
   mutating func render(_ primary: TwitchAdPlaylist, backup: TwitchAdPlaylist?, origin: String) -> String {
     let cleanBackup = backup?.cleanSuffix.flatMap { playlist -> TwitchAdPlaylist? in

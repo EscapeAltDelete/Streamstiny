@@ -1,0 +1,168 @@
+{
+  "first": {
+    "run": "https://github.com/EscapeAltDelete/Streamstiny/actions/runs/40182649729",
+    "measurements": {
+      "before": {
+        "chat_100_messages_per_second": {
+          "browser_fps": 55.922917060268276,
+          "browser_p95_frame_ms": 30,
+          "swift_refresh_median_ms": 3.307624999933978,
+          "swift_refresh_p95_ms": 6.477833333292438,
+          "combined_median_mib": 411.90625,
+          "combined_peak_mib": 417.453125,
+          "combined_cpu_percent": 111.766694866346
+        },
+        "retained_plain_history": {
+          "browser_fps": 34.533162799196056,
+          "browser_p95_frame_ms": 58,
+          "swift_refresh_median_ms": 10.180416666685232,
+          "swift_refresh_p95_ms": 16.04295833328706,
+          "combined_median_mib": 591.375,
+          "combined_peak_mib": 593.234375,
+          "combined_cpu_percent": 112.83490514727642
+        },
+        "scrolling_with_incoming_messages": {
+          "browser_fps": 34.31192660550459,
+          "browser_p95_frame_ms": 59,
+          "swift_refresh_median_ms": 9.25758333335125,
+          "swift_refresh_p95_ms": 15.352416666701174,
+          "scroll_writes_during_interaction": 100,
+          "scroll_writes_after_interaction": 0,
+          "arrival_dom_median_ms": 30,
+          "arrival_dom_p95_ms": 58,
+          "observed_messages": 500,
+          "combined_median_mib": 607.59375,
+          "combined_peak_mib": 608.078125,
+          "combined_cpu_percent": 121.87738143463027
+        },
+        "hidden_chat": {
+          "combined_median_mib": 595.78125,
+          "combined_peak_mib": 596.09375,
+          "combined_cpu_percent": 3.0473995583080375
+        }
+      },
+      "after": {
+        "chat_100_messages_per_second": {
+          "browser_fps": 59.430536976877505,
+          "browser_p95_frame_ms": 23,
+          "swift_refresh_median_ms": 2.318208333349503,
+          "swift_refresh_p95_ms": 4.5970416666705205,
+          "combined_median_mib": 421.296875,
+          "combined_peak_mib": 436.96875,
+          "combined_cpu_percent": 78.04267217727833
+        },
+        "retained_plain_history": {
+          "browser_fps": 51.16449660737209,
+          "browser_p95_frame_ms": 40,
+          "swift_refresh_median_ms": 8.25916666667581,
+          "swift_refresh_p95_ms": 11.59595833325966,
+          "combined_median_mib": 581.7109375,
+          "combined_peak_mib": 583.75,
+          "combined_cpu_percent": 93.67447956902481
+        },
+        "scrolling_with_incoming_messages": {
+          "browser_fps": 55.330882352941174,
+          "browser_p95_frame_ms": 36,
+          "swift_refresh_median_ms": 8.285624999984975,
+          "swift_refresh_p95_ms": 12.924833333386232,
+          "scroll_writes_during_interaction": 0,
+          "scroll_writes_after_interaction": 1,
+          "arrival_dom_median_ms": 21,
+          "arrival_dom_p95_ms": 29,
+          "observed_messages": 500,
+          "combined_median_mib": 588.6171875,
+          "combined_peak_mib": 593.328125,
+          "combined_cpu_percent": 96.43696656551359
+        },
+        "hidden_chat": {
+          "combined_median_mib": 576.21875,
+          "combined_peak_mib": 576.21875,
+          "combined_cpu_percent": 2.1964929880518236
+        }
+      }
+    }
+  },
+  "second": {
+    "run": "https://github.com/EscapeAltDelete/Streamstiny/actions/runs/40184011588",
+    "measurements": {
+      "before": {
+        "chat_100_messages_per_second": {
+          "browser_fps": 60.0375234521576,
+          "browser_p95_frame_ms": 21,
+          "swift_refresh_median_ms": 2.34808333334513,
+          "swift_refresh_p95_ms": 3.986083333302304,
+          "combined_median_mib": 413.9375,
+          "combined_peak_mib": 417.578125,
+          "combined_cpu_percent": 77.74344367098915
+        },
+        "retained_plain_history": {
+          "browser_fps": 40.97771387491014,
+          "browser_p95_frame_ms": 53,
+          "swift_refresh_median_ms": 10.259500000074695,
+          "swift_refresh_p95_ms": 14.16808333328845,
+          "combined_median_mib": 587.75,
+          "combined_peak_mib": 589.21875,
+          "combined_cpu_percent": 110.84345332920044
+        },
+        "scrolling_with_incoming_messages": {
+          "browser_fps": 27.03189763921427,
+          "browser_p95_frame_ms": 59,
+          "swift_refresh_median_ms": 10.474708333276794,
+          "swift_refresh_p95_ms": 16.077708333341434,
+          "scroll_writes_during_interaction": 100,
+          "scroll_writes_after_interaction": 0,
+          "arrival_dom_median_ms": 35,
+          "arrival_dom_p95_ms": 49,
+          "observed_messages": 500,
+          "combined_median_mib": 594.8671875,
+          "combined_peak_mib": 598.609375,
+          "combined_cpu_percent": 130.34224523852694
+        },
+        "hidden_chat": {
+          "combined_median_mib": 583.9140625,
+          "combined_peak_mib": 586.1875,
+          "combined_cpu_percent": 4.577621701617572
+        }
+      },
+      "after": {
+        "chat_100_messages_per_second": {
+          "browser_fps": 59.12257578610431,
+          "browser_p95_frame_ms": 26,
+          "swift_refresh_median_ms": 3.3636250000199652,
+          "swift_refresh_p95_ms": 5.811499999936132,
+          "combined_median_mib": 417.09375,
+          "combined_peak_mib": 436.8125,
+          "combined_cpu_percent": 111.47753827277545
+        },
+        "retained_plain_history": {
+          "browser_fps": 22.35144466654552,
+          "browser_p95_frame_ms": 67,
+          "swift_refresh_median_ms": 11.248583333326678,
+          "swift_refresh_p95_ms": 18.366083333376082,
+          "combined_median_mib": 567.078125,
+          "combined_peak_mib": 573.546875,
+          "combined_cpu_percent": 124.59891472820446
+        },
+        "scrolling_with_incoming_messages": {
+          "browser_fps": 41.46297302190838,
+          "browser_p95_frame_ms": 50,
+          "swift_refresh_median_ms": 9.271791666606077,
+          "swift_refresh_p95_ms": 13.491166666653953,
+          "scroll_writes_during_interaction": 0,
+          "scroll_writes_after_interaction": 1,
+          "arrival_dom_median_ms": 26,
+          "arrival_dom_p95_ms": 35,
+          "observed_messages": 500,
+          "combined_median_mib": 570.8515625,
+          "combined_peak_mib": 571.53125,
+          "combined_cpu_percent": 117.51771547100742
+        },
+        "hidden_chat": {
+          "combined_median_mib": 559.3125,
+          "combined_peak_mib": 559.3125,
+          "combined_cpu_percent": 4.232543213991302
+        }
+      }
+    }
+  }
+}

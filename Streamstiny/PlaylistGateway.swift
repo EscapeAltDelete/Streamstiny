@@ -9,6 +9,7 @@ import Foundation
   private var requests: [UUID: Task<Void, Never>] = [:]
   private(set) var port: UInt16 = 0
   private(set) var waiting = false
+  private(set) var usingBackup = false
 
   private init(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver) throws {
     let parameters = NWParameters.tcp
@@ -51,6 +52,7 @@ import Foundation
   func waitForClean() async -> Bool {
     let clean = await session.waitForClean()
     waiting = await session.waiting
+    usingBackup = await session.usingBackup
     return clean
   }
   func stop() {
@@ -87,6 +89,7 @@ import Foundation
           guard fields.count == 3, fields[0] == "GET" || fields[0] == "HEAD", fields[2] == "HTTP/1.1" || fields[2] == "HTTP/1.0" else { throw URLError(.badServerResponse) }
           let result = await session.response(path: String(fields[1]))
           self?.waiting = await session.waiting
+          self?.usingBackup = await session.usingBackup
           let body = Data(result.text.utf8)
           var response = Data("HTTP/1.1 \(result.status) \(result.status == 200 ? "OK" : "Unavailable")\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
           if fields[0] == "GET" { response.append(body) }
@@ -119,6 +122,7 @@ actor PlaylistSession {
   private var inFlight: [URL: Task<(Int, String), Never>] = [:]
   private var blocked: Set<URL> = []
   var waiting: Bool { !blocked.isEmpty }
+  private(set) var usingBackup = false
   private static let uri = try! NSRegularExpression(pattern: #"URI="([^"]+)""#)
 
   init(source: StreamSource, variants: [HLSVariant], resolver: PlaybackResolver,
@@ -213,6 +217,7 @@ actor PlaylistSession {
       let result = timeline.render(primary, backup: backup, origin: origin)
       if timeline.waiting { blocked.insert(url) } else { blocked.remove(url) }
       timelines[url] = timeline
+      usingBackup = timelines.values.contains { $0.usingBackup }
       return (200, result)
     } catch { return (502, "") }
   }

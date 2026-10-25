@@ -34,6 +34,7 @@ struct PlaybackPreferencesView: View {
   @AppStorage("twitchAdBlocking") private var twitchAdBlocking = false
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
+  @AppStorage("showBitrate") private var showBitrate = false
   var body: some View {
     Form {
       Section {
@@ -64,6 +65,7 @@ struct PlaybackPreferencesView: View {
         Text("Experimental. Starts at the newest available live segment and may buffer more. YouTube's broadcast latency still applies.")
       }
       Section("Player") {
+        Toggle("Show Bitrate", isOn: $showBitrate)
         Toggle("Show DGG viewers", isOn: $showDGGViewers)
         Toggle("Show overall stream viewers", isOn: $showViewers)
       }

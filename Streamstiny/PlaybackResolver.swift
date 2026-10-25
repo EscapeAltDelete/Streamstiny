@@ -51,6 +51,30 @@ actor PlaybackResolver {
     try await twitch.alternative(source, playerType: playerType)
   }
 
+  // Decoder EOF is not stream termination. Only a valid media playlist can
+  // confirm ENDLIST; HTTP failures and malformed responses remain retryable.
+  func ended(at url: URL, headers: [String: String] = [:]) async throws -> Bool {
+    func playlist(_ url: URL) async throws -> (String, URL) {
+      var request = URLRequest(url: url)
+      request.allHTTPHeaderFields = headers
+      let (data, response) = try await session.data(for: request)
+      try Task.checkCancellation()
+      guard let response = response as? HTTPURLResponse else { throw PlaybackFailure.unavailable }
+      guard response.statusCode == 200 else { throw PlaybackFailure.http(response.statusCode) }
+      guard data.count <= 2 * 1024 * 1024 else { throw PlaybackFailure.unavailable }
+      let text = String(decoding: data, as: UTF8.self)
+      guard text.hasPrefix("#EXTM3U") else { throw PlaybackFailure.unavailable }
+      return (text, response.url ?? url)
+    }
+    var (text, base) = try await playlist(url)
+    if text.contains("#EXT-X-STREAM-INF:") {
+      guard let variant = HLSPlaylist.variants(text, base: base).first else { throw PlaybackFailure.unavailable }
+      (text, base) = try await playlist(variant.url)
+    }
+    guard text.contains("#EXTINF:") else { throw PlaybackFailure.unavailable }
+    return text.components(separatedBy: .newlines).contains { $0.trimmingCharacters(in: .whitespacesAndNewlines) == "#EXT-X-ENDLIST" }
+  }
+
   func variants(at url: URL) async throws -> [HLSVariant] {
     guard url.pathExtension.lowercased() == "m3u8" else { return [] }
     let (data, response) = try await session.data(from: url)

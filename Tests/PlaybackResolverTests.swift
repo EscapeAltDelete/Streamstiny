@@ -81,6 +81,23 @@ enum PlaybackResolverTests {
     let choices = try await resolver.variants(at: url)
     precondition(choices.count == 1 && choices[0].url.path == "/media.m3u8")
     precondition(PlaybackProtocol.count == 1, "Quality discovery only downloads the master")
+    let live = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2,live\n100.ts\n"
+    for ended in [false, true] {
+      PlaybackProtocol.prepare(["video.example/master.m3u8": (200, master),
+        "video.example/media.m3u8": (200, live + (ended ? "#EXT-X-ENDLIST\n" : ""))])
+      let verified = try await resolver.ended(at: url)
+      precondition(verified == ended && PlaybackProtocol.count == 2)
+    }
+    for status in [403, 404, 429, 500, 503] {
+      PlaybackProtocol.prepare(["video.example/master.m3u8": (status, "")])
+      do { _ = try await resolver.ended(at: url); preconditionFailure("HTTP failures must not become authoritative stream termination") }
+      catch PlaybackFailure.http(let code) { precondition(code == status) }
+    }
+    for invalid in ["", "<html>Temporary error</html>", "#EXTM3U\n#EXT-X-ENDLIST\n"] {
+      PlaybackProtocol.prepare(["video.example/master.m3u8": (200, invalid)])
+      do { _ = try await resolver.ended(at: url); preconditionFailure("Only a validated media playlist can confirm an end") }
+      catch PlaybackFailure.unavailable {}
+    }
     PlaybackProtocol.prepare([:])
     let none = try await resolver.variants(at: URL(string: "https://video.example/no-playlist")!)
     precondition(none.isEmpty && PlaybackProtocol.count == 0)

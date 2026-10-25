@@ -41,7 +41,7 @@ struct ChatAssetConfiguration: Codable, Equatable, Sendable {
   // The production embed page is the same configuration source as the website.
   static func discover(in html: String) throws -> Self {
     func attribute(_ name: String) -> String? {
-      let rule = try? NSRegularExpression(pattern: name + #"\s*=\s*["']([^"']+)["']"#)
+      let rule = try? NSRegularExpression(pattern: name + #"\s*=\s*["']([^"']*)["']"#)
       guard let match = rule?.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
         let range = Range(match.range(at: 1), in: html) else { return nil }
       return String(html[range]).replacingOccurrences(of: "&amp;", with: "&")

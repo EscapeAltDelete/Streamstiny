@@ -173,6 +173,7 @@ import ImageIO
     let decode = "let next=0,success=0,errors=[];await Promise.all(Array.from({length:4},async()=>{while(next<catalog.length){const item=catalog[next++],image=new Image();try{image.src=item.url;await image.decode();if(!image.naturalWidth||!image.naturalHeight)throw Error('Empty image');success++}catch(e){errors.push({name:item.name,url:item.url,error:String(e)})}}}));return {success,errors};"
     let audit: [String: Any] = try await javascript(web, decode, arguments: ["catalog": catalog])
     let failures = audit["errors"] as? [[String: Any]] ?? []
+    XCTAssertTrue(failures.isEmpty, "Every current catalog asset must decode through the production loader")
     let direct: [String: Any] = try await javascript(reference, decode, arguments: ["catalog": failures.map { ["name": $0["name"]!, "url": ($0["url"] as! String).replacingOccurrences(of: "dgg-asset:", with: "https:")] }])
     XCTAssertEqual(Set(failures.compactMap { $0["name"] as? String }), Set((direct["errors"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String }), "Production transport must decode every format supported by this platform's direct first-party renderer")
     results["full_catalog"] = audit
@@ -199,5 +200,89 @@ import ImageIO
     results["platform_imageio"] = platformDecoding
     snapshot(window, name: "native-emote-validation")
     print("CHAT_NATIVE_VALIDATION " + String(decoding: try JSONSerialization.data(withJSONObject: results, options: [.sortedKeys]), as: UTF8.self))
+  }
+}
+
+@MainActor extension ChatBenchmarkTests {
+  func testAssetSnapshotPersists() async throws {
+    let store = EmoteStore()
+    await store.load(force: true)
+    XCTAssertNil(store.status)
+    let snapshot = try XCTUnwrap(store.snapshot)
+    let saved = await store.assets.savedSnapshot()
+    XCTAssertEqual(saved, snapshot, "The real application cache location must retain the validated snapshot for restart recovery")
+  }
+
+  func testReportedEmotesAnimateInChat() async throws {
+    let store = EmoteStore()
+    await store.load(force: true)
+    let names = ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH"]
+    XCTAssertTrue(Set(names).isSubset(of: Set(store.catalog.keys)), "Authoritative catalog unavailable: \(store.status ?? "none")")
+    let feed = Feed()
+    feed.messages = names.enumerated().map { index, name in
+      ChatMessage(payload: ["uuid": "reported-\(index)", "nick": "Benchmark", "data": name, "roles": ["PROTECTED"]])
+    }
+    let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
+    let controller = UIHostingController(rootView: Timeline(feed: feed, emotes: store))
+    window.rootViewController = controller; window.makeKeyAndVisible(); controller.view.layoutIfNeeded()
+    let web = try XCTUnwrap(findWeb(controller.view))
+    try await waitForRenderer(web)
+    var visible = false
+    for _ in 0..<100 {
+      controller.view.layoutIfNeeded()
+      visible = try await javascript(web, "return document.querySelectorAll('.emote').length===4 && [...document.querySelectorAll('.emote')].every(n=>n.getBoundingClientRect().height>0);")
+      if visible { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    let readiness: String = try await javascript(web, "return JSON.stringify({width:innerWidth,height:innerHeight,text:document.body.innerText,metrics:ChatRenderer.metrics()});")
+    XCTAssertTrue(visible, readiness)
+    let _: Bool = try await javascript(web, "await Promise.all([...document.querySelectorAll('.emote')].map(async node=>{const image=new Image();image.src=node.dataset.resource;await image.decode()}));return true;")
+    let bounds: [String: [String: Double]] = try await javascript(web, "return Object.fromEntries([...document.querySelectorAll('.emote')].map(node=>{const r=node.getBoundingClientRect();return [node.title,{x:r.x,y:r.y,width:r.width,height:r.height}]}));")
+    XCTAssertEqual(Set(bounds.keys), Set(names), "Exact catalog tokens must become emote elements, not plain text")
+    var hashes = Dictionary(uniqueKeysWithValues: names.map { ($0, Set<String>()) })
+    for index in 0..<8 {
+      let image: UIImage = try await withCheckedThrowingContinuation { continuation in
+        web.takeSnapshot(with: nil) { image, error in
+          if let image { continuation.resume(returning: image) }
+          else { continuation.resume(throwing: error ?? URLError(.cannotDecodeContentData)) }
+        }
+      }
+      if index == 0 { let attachment = XCTAttachment(image: image); attachment.name = "reported-emotes"; attachment.lifetime = .keepAlways; add(attachment) }
+      for name in names {
+        let r = try XCTUnwrap(bounds[name])
+        let rect = CGRect(x: r["x"]!, y: r["y"]!, width: r["width"]!, height: r["height"]!).applying(CGAffineTransform(scaleX: image.scale, y: image.scale))
+        let crop = try XCTUnwrap(image.cgImage?.cropping(to: rect))
+        let data = try XCTUnwrap(UIImage(cgImage: crop).pngData())
+        hashes[name]!.insert(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined())
+      }
+      try await Task.sleep(for: .milliseconds(150))
+    }
+    for name in names { XCTAssertGreaterThan(hashes[name]!.count, 1, "\(name) must show changing image pixels") }
+    print("REPORTED_EMOTES " + String(decoding: try JSONSerialization.data(withJSONObject: hashes.mapValues(\.count)), as: UTF8.self))
+  }
+
+  func testAVIFContainerDiagnosis() async throws {
+    let store = EmoteStore()
+    await store.load(force: true)
+    var results: [[String: Any]] = []
+    for name in ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH"] {
+      let url = try XCTUnwrap(store.catalog[name])
+      var request = URLRequest(url: url)
+      request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+      let (data, _) = try await URLSession.shared.data(for: request)
+      let normalized = ChatImageFormat.normalized(data)
+      XCTAssertEqual(ChatImageFormat.normalized(normalized), normalized)
+      for (kind, value) in [("original", data), ("normalized", normalized)] {
+        let source = CGImageSourceCreateWithData(value as CFData, nil)
+        let count = source.map { CGImageSourceGetCount($0) } ?? 0
+        var decoded = 0
+        if let source { for index in 0..<count {
+          autoreleasepool { if CGImageSourceCreateImageAtIndex(source, index, nil) != nil { decoded += 1 } }
+        } }
+        if kind == "normalized" { XCTAssertGreaterThan(count, 1); XCTAssertEqual(decoded, count) }
+        results.append(["name": name, "variant": kind, "frames": count, "decoded": decoded, "bytes": value.count])
+      }
+    }
+    print("AVIF_DIAGNOSIS " + String(decoding: try JSONSerialization.data(withJSONObject: results), as: UTF8.self))
   }
 }

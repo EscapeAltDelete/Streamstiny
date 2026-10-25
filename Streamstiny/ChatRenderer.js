@@ -13,7 +13,8 @@
   let holdTimer = 0, startPoint = null;
   let recovery = 0, retryVersion = 0;
   let rowWidth = window.innerWidth;
-  const stats = { updates: 0, inserted: 0, replaced: 0, removed: 0, pickerBuilds: 0, assetFailures: 0 };
+  let touching = false, wheelUntil = 0, retiredHeight = 0, retireTimer = 0;
+  const stats = { updates: 0, inserted: 0, replaced: 0, removed: 0, pickerBuilds: 0, assetFailures: 0, scrollWrites: 0 };
   const send = data => window.webkit?.messageHandlers?.chat?.postMessage(data);
   const proxy = address => address.replace(/^https:/, 'dgg-asset:');
   const allows = item => account.privileged || (item.patreonOnly ? account.patreonMember : item.minimumSubTier <= (account.tier || 0));
@@ -26,14 +27,38 @@
     const node = document.elementFromPoint(12, 2)?.closest('[data-message]');
     if (node) anchor = { id: node.dataset.message, top: node.getBoundingClientRect().top };
   }
-  function restoreAnchor(saved) {
-    if (following) window.scrollTo(0, document.scrollingElement.scrollHeight);
+  function restoreAnchor(saved, follow = following) {
+    if (follow) {
+      const viewport = document.scrollingElement;
+      if (Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop) > 0.5) {
+        stats.scrollWrites++; window.scrollTo(0, viewport.scrollHeight);
+      }
+    }
     else if (saved) {
       const node = records.get(saved.id)?.node;
-      if (node) window.scrollBy(0, node.getBoundingClientRect().top - saved.top);
+      const delta = node ? node.getBoundingClientRect().top - saved.top : 0;
+      if (Math.abs(delta) > 0.5) { stats.scrollWrites++; window.scrollBy(0, delta); }
     }
   }
-  window.addEventListener('scroll', rememberAnchor, { passive: true });
+  function releaseRetiredRows() {
+    clearTimeout(retireTimer);
+    retireTimer = setTimeout(() => {
+      retireTimer = 0;
+      if (touching || !retiredHeight) return;
+      rememberAnchor();
+      const saved = anchor;
+      retiredHeight = 0; content.style.paddingTop = '';
+      restoreAnchor(saved); rememberAnchor();
+    }, 120);
+  }
+  window.addEventListener('pointerdown', () => { touching = true; }, { passive: true });
+  for (const event of ['pointerup', 'pointercancel']) window.addEventListener(event, () => {
+    touching = false; if (retiredHeight) releaseRetiredRows();
+  }, { passive: true });
+  window.addEventListener('wheel', () => { wheelUntil = performance.now() + 120; }, { passive: true });
+  window.addEventListener('scroll', () => {
+    rememberAnchor(); if (retiredHeight) releaseRetiredRows();
+  }, { passive: true });
   window.addEventListener('resize', () => requestAnimationFrame(() => {
     if (mode !== 'badges') {
       if (rowWidth !== window.innerWidth) { rowWidth = window.innerWidth; restoreRows(); }
@@ -163,6 +188,7 @@
   }, { rootMargin: '100px 0px' });
   function imageResult(key, success) {
     if (!resources.has(key)) return;
+    if (!success && !failedResources.has(key)) send({ action: 'assetFailure' });
     if (success) failedResources.delete(key); else failedResources.add(key);
     for (const node of resources.get(key) || []) {
       if (!success && !node.classList.contains('missing-asset')) stats.assetFailures++;
@@ -207,6 +233,7 @@
     }
   }
   function clear() {
+    clearTimeout(retireTimer); retireTimer = 0; retiredHeight = 0; content.style.paddingTop = '';
     rows.disconnect(); forget(content); content.replaceChildren(); records.clear(); pickerSignature = ''; profileSignature = '';
   }
   function assetFinished(url, success) {
@@ -273,6 +300,10 @@
     if (active === value) return;
     active = value;
     document.documentElement.classList.toggle('paused', !active);
+    if (!active) {
+      touching = false; wheelUntil = 0;
+      clearTimeout(retireTimer); retireTimer = 0;
+    } else if (retiredHeight) releaseRetiredRows();
     for (const nodes of resources.values()) for (const node of nodes) {
       if (active) {
         node.classList.remove('missing-asset');
@@ -285,12 +316,30 @@
   }
 
   function updateChat(data) {
+    const interacting = data.interacting || touching || performance.now() < wheelUntil;
+    const follow = following && !interacting;
+    if (interacting) rememberAnchor();
     let saved = anchor;
-    if (saved && data.ids && !data.ids.includes(saved.id)) {
+    const desired = data.ids ? new Set(data.ids) : null;
+    const removed = [];
+    if (desired) for (const [id, item] of records) if (!desired.has(id)) removed.push(item);
+    // Keep removed offscreen row space during touch/inertial scrolling. Drop
+    // their resources now and perform one offset correction after scrolling.
+    if (interacting && !follow) {
+      const height = removed.reduce((sum, item) => {
+        const bounds = item.node.getBoundingClientRect();
+        return sum + (bounds.bottom <= 0 ? bounds.height : 0);
+      }, 0);
+      if (height) {
+        retiredHeight += height;
+        if (!retireTimer && !touching) releaseRetiredRows();
+      }
+    }
+    if (saved && desired && !desired.has(saved.id)) {
       const previous = [...content.children].map(node => node.dataset.message);
       const retained = new Set(data.ids), index = previous.indexOf(saved.id);
       const id = previous.slice(index).find(id => retained.has(id)) || previous.slice(0, index).reverse().find(id => retained.has(id));
-      saved = id ? { id, top: saved.top } : null;
+      saved = id ? { id, top: records.get(id).node.getBoundingClientRect().top } : null;
     }
     for (const record of data.records || []) {
       let item = records.get(record.id);
@@ -323,9 +372,9 @@
       if (counter) counter.textContent = record.combo > 1 ? record.combo + '× combo' : '';
     }
     if (data.ids) {
-      const desired = new Set(data.ids);
-      for (const [id, item] of records) if (!desired.has(id)) {
-        rows.unobserve(item.node); forget(item.node); item.node.remove(); records.delete(id); stats.removed++;
+      if (retiredHeight) content.style.paddingTop = retiredHeight + 'px';
+      for (const item of removed) {
+        rows.unobserve(item.node); forget(item.node); item.node.remove(); records.delete(item.node.dataset.message); stats.removed++;
       }
       let cursor = content.firstElementChild;
       for (const id of data.ids) {
@@ -335,7 +384,7 @@
         cursor = node.nextElementSibling;
       }
     }
-    restoreAnchor(saved);
+    restoreAnchor(saved, follow);
     rememberAnchor();
   }
   function updatePicker() {

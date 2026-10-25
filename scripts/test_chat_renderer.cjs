@@ -29,7 +29,7 @@ const execFile = promisify(require('node:child_process').execFile);
           body = await fs.readFile(file); mime = await fs.readFile(file + '.mime', 'utf8');
         }
         catch {
-          const result = await execFile('curl', ['--fail', '--silent', '--show-error', '--location', '--max-time', '30', '--output', file, '--write-out', '%{content_type}', url]);
+          const result = await execFile('curl', ['--fail', '--silent', '--show-error', '--location', '--max-time', '30', '--user-agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15', '--output', file, '--write-out', '%{content_type}', url]);
           body = await fs.readFile(file); mime = result.stdout;
           await fs.writeFile(file + '.mime', mime);
         }
@@ -41,7 +41,7 @@ const execFile = promisify(require('node:child_process').execFile);
   }
   const html = (await fetch('https://www.destiny.gg/embed/chat', true)).body.toString();
   const base = html.match(/data-cdn=["']([^"']+)["']/)[1];
-  const version = html.match(/data-cache-key=["']([^"']+)["']/)[1];
+  const version = html.match(/data-cache-key=["']([^"']*)["']/)[1];
   const catalog = JSON.parse((await fetch(`${base}/emotes/emotes.json?_=${version}`)).body);
   const flairs = JSON.parse((await fetch(`${base}/flairs/flairs.json?_=${version}`)).body);
   const [emotes, badges] = await Promise.all(['emotes/emotes.css', 'flairs/flairs.css'].map(async file => {
@@ -227,6 +227,31 @@ const execFile = promisify(require('node:child_process').execFile);
     await page.evaluate(ids => ChatRenderer.update({ records: [], ids }), history.slice(20).map(row => row.id));
     assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1, 'History pruning must preserve the reading position');
     assert.equal(await page.locator('[data-message]').count(), 480, 'Pruned messages must release their DOM nodes');
+    const arriving = [0, 1, 2].map(i => ({ id: 'arriving-' + i, html: `<span class="text">Incoming ${i}</span>`, classes: 'msg-chat msg-user', username: 'test' }));
+    const retainedIDs = history.slice(25).map(row => row.id).concat(arriving.map(row => row.id));
+    const writesBeforeGesture = await page.evaluate(() => { window.dispatchEvent(new PointerEvent('pointerdown')); return ChatRenderer.metrics().scrollWrites; });
+    await page.evaluate(data => ChatRenderer.update(data), { records: arriving, ids: retainedIDs, interacting: true });
+    assert.equal(await page.locator('[data-message]').count(), retainedIDs.length, 'Incoming messages render immediately during scrolling');
+    assert.equal(await page.evaluate(() => ChatRenderer.metrics().scrollWrites), writesBeforeGesture, 'Pruning must not interrupt touch scrolling with an offset write');
+    assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1);
+    await page.evaluate(() => window.dispatchEvent(new PointerEvent('pointerup')));
+    await page.waitForFunction(() => !document.getElementById('content').style.paddingTop);
+    assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1, 'One idle correction preserves the same reading anchor');
+    const afterIdle = await page.evaluate(() => ChatRenderer.metrics().scrollWrites);
+    assert.equal(afterIdle, writesBeforeGesture + 1);
+    const appended = { id: 'append-only', html: '<span class="text">Another message</span>', classes: 'msg-chat msg-user', username: 'test' };
+    await page.evaluate(data => ChatRenderer.update(data), { records: [appended], ids: retainedIDs.concat(appended.id) });
+    assert.equal(await page.evaluate(() => ChatRenderer.metrics().scrollWrites), afterIdle, 'Appending below a reader needs no scroll correction');
+    await page.evaluate(ids => {
+      window.dispatchEvent(new PointerEvent('pointerdown'));
+      ChatRenderer.update({ records: [], ids, interacting: true });
+      ChatRenderer.update({ active: false });
+    }, retainedIDs.slice(2).concat(appended.id));
+    await page.waitForTimeout(180);
+    assert.equal(await page.evaluate(() => ChatRenderer.metrics().scrollWrites), afterIdle, 'Backgrounding cancels pending gesture corrections');
+    await page.evaluate(() => ChatRenderer.update({ active: true }));
+    await page.waitForFunction(() => !document.getElementById('content').style.paddingTop);
+    assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1, 'Foregrounding releases retained space without losing the anchor');
     await page.route('https://assets.streamstiny.invalid/preview.png', route => route.fulfill(fixture));
     const preview = { id: 'preview', html: '<img class="preview not-visible" width="200" height="120" data-resource="https://assets.streamstiny.invalid/preview.png">', classes: 'msg-chat msg-user', username: 'test', accessibility: 'preview' };
     await page.evaluate(record => ChatRenderer.update({ records: [record], ids: [record.id] }), preview);

@@ -91,6 +91,9 @@ struct ChatList: UIViewRepresentable {
       var payload = commonPayload(mode: "chat")
       payload["records"] = updates
       payload["fontSize"] = UIFontMetrics.default.scaledValue(for: CGFloat(parent.fontSize))
+      if let scroll = webView?.scrollView {
+        payload["interacting"] = scroll.isTracking || scroll.isDragging || scroll.isDecelerating
+      }
       if ids != nextIDs { payload["ids"] = nextIDs; ids = nextIDs }
       sending = true
       call("update", arguments: ["payload": payload]) { [weak self] in

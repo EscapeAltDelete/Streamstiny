@@ -121,6 +121,7 @@ import OSLog
   func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
     guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let action = body["action"] as? String else { return }
     if action == "ready" { ready = true; refresh() }
+    else if action == "assetFailure" { emotes.assetFailed() }
     else if action == "menu" {
       menuRequest = body
       guard !actions(body).isEmpty else { return }
@@ -160,6 +161,7 @@ import OSLog
         call("assetFinished", arguments: ["url": url.absoluteString, "success": true])
       } catch {
         guard !Task.isCancelled, downloads[id] != nil else { return }
+        emotes.assetFailed()
         urlSchemeTask.didFailWithError(error)
         call("assetFinished", arguments: ["url": url.absoluteString, "success": false])
       }

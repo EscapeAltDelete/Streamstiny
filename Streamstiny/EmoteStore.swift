@@ -19,12 +19,20 @@ import OSLog
   @ObservationIgnored private var generation = 0
   @ObservationIgnored private var pendingCacheKey: String?
   @ObservationIgnored private var nextRefresh = Date.distantPast
+  @ObservationIgnored private var scheduledRefresh: Task<Void, Never>?
+  @ObservationIgnored private let refreshInterval: TimeInterval
+  @ObservationIgnored private let retryInterval: TimeInterval
+  @ObservationIgnored private var needsImageRecovery = false
+  @ObservationIgnored private var imageRecoveryAttempts = 0
 
-  init(assets: ChatAssetLoader? = nil) {
+  init(assets: ChatAssetLoader? = nil, refreshInterval: TimeInterval = 1800, retryInterval: TimeInterval = 30) {
     let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
       .appendingPathComponent("Streamstiny/chat-assets.json")
     self.assets = assets ?? ChatAssetLoader(snapshotURL: cache)
+    self.refreshInterval = refreshInterval
+    self.retryInterval = retryInterval
   }
+  deinit { scheduledRefresh?.cancel(); assetLoad?.cancel() }
   func favorite(_ name: String) {
     if favorites.contains(name) { favorites.remove(name) } else { favorites.insert(name) }
     UserDefaults.standard.set(Array(favorites).sorted(), forKey: "favoriteEmotes")
@@ -53,7 +61,7 @@ import OSLog
   }
   func load(force: Bool = false, cacheKey: String? = nil) async {
     guard !suspended else { return }
-    if let key = cacheKey, key == snapshot?.configuration.cacheKey { return }
+    if let key = cacheKey, !key.isEmpty, key == snapshot?.configuration.cacheKey, status == nil { return }
     if let assetLoad {
       if let cacheKey { pendingCacheKey = cacheKey }
       await assetLoad.value
@@ -72,6 +80,16 @@ import OSLog
     if let key = pendingCacheKey {
       pendingCacheKey = nil
       await load(force: true, cacheKey: key)
+    } else { scheduleRefresh() }
+  }
+  private func scheduleRefresh() {
+    scheduledRefresh?.cancel()
+    guard !suspended else { scheduledRefresh = nil; return }
+    let delay = max(0, nextRefresh.timeIntervalSinceNow)
+    scheduledRefresh = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+      self?.scheduledRefresh = nil
+      await self?.load()
     }
   }
   private func refresh(cacheKey: String?, generation version: Int) async {
@@ -85,24 +103,29 @@ import OSLog
       } else { discovered = try await assets.discover() }
       let configuration = ChatAssetConfiguration(base: discovered.base, cacheKey: cacheKey ?? discovered.cacheKey)
       let value: ChatAssetSnapshot
-      if let current = snapshot, current.configuration == configuration { value = current }
+      if let current = snapshot, current.configuration == configuration, !configuration.cacheKey.isEmpty, status == nil { value = current }
       else { value = try await assets.snapshot(configuration) }
       try Task.checkCancellation()
       guard generation == version, !suspended else { return }
       apply(value)
       status = nil
-      nextRefresh = Date().addingTimeInterval(1800)
+      nextRefresh = Date().addingTimeInterval(refreshInterval)
+      if needsImageRecovery {
+        needsImageRecovery = false
+        recoverAssets(resetBudget: false)
+      }
     } catch {
       guard generation == version, !Task.isCancelled else { return }
       Logger(subsystem: "gg.streamstiny.app", category: "Chat assets").error("Asset refresh failed: \(String(describing: error), privacy: .public)")
-      status = snapshot == nil ? "Chat assets could not be loaded. Reopen chat to retry." : "Using cached chat assets; updates are temporarily unavailable."
-      nextRefresh = Date().addingTimeInterval(30)
+      status = snapshot == nil ? "Chat assets could not be loaded. Retrying automatically." : "Using cached chat assets; updates are temporarily unavailable."
+      nextRefresh = Date().addingTimeInterval(retryInterval)
     }
   }
   private func apply(_ value: ChatAssetSnapshot) {
     let changed = snapshot?.emotes != value.emotes || snapshot?.flairs != value.flairs || snapshot?.stylesheet != value.stylesheet
     snapshot = value
     guard changed else { return }
+    imageRecoveryAttempts = 0
     requirements = Dictionary(value.emotes.map { ($0.prefix, $0) }, uniquingKeysWith: { _, new in new })
     catalog = Dictionary(value.emotes.compactMap { emote in
       emote.image.first?.url.flatMap { ChatAssetConfiguration.proxied($0) == nil ? nil : (emote.prefix, $0) }
@@ -117,6 +140,7 @@ import OSLog
     if suspended {
       generation += 1
       assetLoad?.cancel(); assetLoad = nil
+      scheduledRefresh?.cancel(); scheduledRefresh = nil
       pendingCacheKey = nil
     }
     Task { await assets.releaseMemory() }
@@ -126,8 +150,18 @@ import OSLog
     guard suspended else { return }
     suspended = false
     recoverAssets()
+    if status != nil { nextRefresh = .distantPast }
+    scheduleRefresh()
   }
-  func recoverAssets() {
+  func assetFailed() {
+    guard !suspended, !needsImageRecovery, imageRecoveryAttempts < 3 else { return }
+    imageRecoveryAttempts += 1
+    needsImageRecovery = true
+    nextRefresh = min(nextRefresh, Date().addingTimeInterval(retryInterval * pow(2, Double(imageRecoveryAttempts - 1))))
+    scheduleRefresh()
+  }
+  func recoverAssets(resetBudget: Bool = true) {
+    if resetBudget { imageRecoveryAttempts = 0; needsImageRecovery = false }
     recoveryRevision += 1
     revision += 1
   }

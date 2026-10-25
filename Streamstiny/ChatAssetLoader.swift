@@ -73,7 +73,7 @@ actor ChatAssetLoader {
             metrics.bytes += sample.bytes
             metrics.cacheHits += sample.cached ? 1 : 0
             if response.statusCode == 200 {
-              resource = Resource(data: data, response: response)
+              resource = Resource(data: ChatImageFormat.normalized(data), response: response)
               break
             }
             guard attempt == 0, [408, 429, 500, 502, 503, 504].contains(response.statusCode) else {
@@ -125,7 +125,10 @@ actor ChatAssetLoader {
     let result = try ChatAssetSnapshot(configuration: configuration,
       emotes: JSONDecoder().decode([Emote].self, from: values[0].data),
       flairs: JSONDecoder().decode([ChatFlair].self, from: values[1].data), emoteCSS: style, flairCSS: badges)
-    guard !result.emotes.isEmpty, !result.flairs.isEmpty, !style.isEmpty, !badges.isEmpty else { throw URLError(.cannotDecodeContentData) }
+    guard !result.emotes.isEmpty, !result.flairs.isEmpty,
+      result.emotes.contains(where: { !$0.prefix.isEmpty && $0.image.contains(where: { $0.url.flatMap(ChatAssetConfiguration.proxied) != nil }) }),
+      style.contains(".emote"), badges.contains(".flair"),
+      !style.lowercased().contains("<html"), !badges.lowercased().contains("<html") else { throw URLError(.cannotDecodeContentData) }
     if let snapshotURL {
       try? FileManager.default.createDirectory(at: snapshotURL.deletingLastPathComponent(), withIntermediateDirectories: true)
       try? JSONEncoder().encode(result).write(to: snapshotURL, options: .atomic)
@@ -135,7 +138,9 @@ actor ChatAssetLoader {
   func savedSnapshot() -> ChatAssetSnapshot? {
     guard let snapshotURL, let data = try? Data(contentsOf: snapshotURL), data.count < 5 * 1024 * 1024,
       let snapshot = try? JSONDecoder().decode(ChatAssetSnapshot.self, from: data),
-      !snapshot.emotes.isEmpty, !snapshot.flairs.isEmpty, !snapshot.stylesheet.isEmpty,
+      !snapshot.emotes.isEmpty, !snapshot.flairs.isEmpty,
+      snapshot.stylesheet.contains(".emote"), snapshot.stylesheet.contains(".flair"),
+      !snapshot.stylesheet.lowercased().contains("<html"),
       snapshot.configuration.base.scheme == "https",
       snapshot.configuration.base.host?.hasSuffix(".destiny.gg") == true else { return nil }
     return snapshot

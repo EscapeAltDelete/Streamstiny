@@ -2,15 +2,18 @@ import AVFoundation
 import AVKit
 import MediaPlayer
 import Observation
+@preconcurrency import Network
 import SwiftUI
 
 @MainActor @Observable final class NativePlayback: NSObject, AVPictureInPictureControllerDelegate {
   private(set) var hls: HLSPlayback?
   private(set) var title = ""
-  private(set) var loading = false
-  private(set) var buffering = false
-  private(set) var playing = false
-  private(set) var error: String?
+  private(set) var status: PlaybackStatus = .stopped
+  var loading: Bool { status == .connecting }
+  var buffering: Bool { status == .buffering || status == .recovering }
+  var playing: Bool { status == .playing }
+  var error: String? { status.error }
+  private var pipelineFailed: Bool { hls?.error != nil || hls?.engine.playbackState == .finished }
   private(set) var variants: [HLSVariant] = []
   private(set) var qualityID: String?
   private(set) var edge: AngelEdge?
@@ -18,6 +21,9 @@ import SwiftUI
   private(set) var switching = false
   private(set) var settingsError: String?
   private(set) var resolution = ""
+  private(set) var bitrate: StreamBitrate?
+  private var reportsBitrate = false
+  private var nextBitrateCheck = 0.0
   private(set) var buffered = 0.0
   private(set) var waitingForAds = false
   private(set) var catchingUp = false
@@ -37,8 +43,7 @@ import SwiftUI
   private var discovery: Task<Void, Never>?
   private var selection: Task<Void, Never>?
   private var selectionVersion = 0
-  private var stall: Task<Void, Never>?
-  private var recoveredAt = Date.distantPast
+  @ObservationIgnored private var stall: Task<Void, Never>?
   var supportsEdges: Bool {
     source?.provider == .angelthump
       && variants.contains {
@@ -48,12 +53,18 @@ import SwiftUI
   private let resolver = PlaybackResolver()
   private var source: StreamSource?
   private var playlistGateway: PlaylistGateway?
-  private var retry: Task<Void, Never>?
+  @ObservationIgnored private var retry: Task<Void, Never>?
   private var retryVersion = 0
   private var generation = 0
   private var failures = 0
+  private var healthySince: Date?
+  @ObservationIgnored private var network: NWPathMonitor?
+  private var networkVersion = 0
+  private var connectivity = PlaybackConnectivity()
   private var wantsPlayback = true
   private var commands: [PlaybackCommandTarget] = []
+
+  deinit { network?.cancel(); retry?.cancel(); stall?.cancel() }
 
   var pipActive: Bool { hls?.engine.pipController?.isPictureInPictureActive == true }
 
@@ -65,7 +76,7 @@ import SwiftUI
   ) {
     completionHandler(true)
   }
-  func load(_ source: StreamSource, force: Bool = false) async {
+  func load(_ source: StreamSource, force: Bool = false, verifyEnd: Bool = false) async {
     guard force || self.source != source || hls == nil else {
       return
     }
@@ -93,35 +104,48 @@ import SwiftUI
       cancelRetry()
     }
     self.source = source
+    if wantsPlayback { monitorNetwork() }
     title = source.title
-    error = nil
-    loading = true
+    status = .connecting
+    bitrate = nil
+    nextBitrateCheck = 0
+    healthySince = nil
     if !force {
       hls?.pause()
       playlistGateway?.stop()
       playlistGateway = nil
-      playing = false
-      buffering = false
     }
     do {
       let media = try await resolver.resolve(source)
+      if verifyEnd, source.provider == .direct,
+        try await resolver.ended(at: media.url, headers: media.headers) {
+        guard version == generation, !Task.isCancelled else { return }
+        streamEnded(); return
+      }
+      let preferred = variants.first { $0.id == qualityID }
+      let starting = self.media == nil
       var choices = media.variants
       try Task.checkCancellation()
       guard version == generation else { return }
-      self.media = media
       if choices == nil, highestQuality || (force && qualityID != nil) {
-        choices = (try? await resolver.variants(at: media.url)) ?? []
+        choices = try await resolver.variants(at: media.url)
         guard version == generation, !Task.isCancelled else { return }
       }
       if let choices { variants = choices }
+      self.media = media
       var edgeURL: URL?
       var variant: HLSVariant?
-      if highestQuality, !force {
+      if highestQuality, !force || starting {
         variant = variants.first
         qualityID = variant?.id
       }
       if force, qualityID != nil {
         variant = variants.first { $0.id == qualityID }
+          ?? preferred.flatMap { requested in variants.first {
+            $0.width == requested.width && $0.height == requested.height
+              && $0.frameRate.rounded() == requested.frameRate.rounded() && $0.externalMedia == requested.externalMedia
+          } }
+        qualityID = variant?.id
         if let edge, let variant,
           let verified = try? await resolver.verifiedEdge(edge, variant: variant)
         {
@@ -131,7 +155,6 @@ import SwiftUI
           settingsError = "That edge is unavailable. Using the provider’s default server."
         }
         guard version == generation, !Task.isCancelled else { return }
-        if variant == nil { qualityID = nil }
       }
       try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
       try AVAudioSession.sharedInstance().setActive(true)
@@ -148,14 +171,22 @@ import SwiftUI
       playlistGateway?.stop()
       playlistGateway = gateway
       if commands.isEmpty { configureRemoteCommands() }
-      loading = false
+      status = wantsPlayback ? .buffering : .paused
       stall?.cancel()
       stall = nil
       if variants.isEmpty, choices == nil { discover(media.url, version: version) }
-    } catch is CancellationError { if version == generation { loading = false } } catch {
+      updateTime()
+    } catch is CancellationError { if version == generation { status = .paused } }
+    catch PlaybackFailure.offline {
+      guard version == generation, !Task.isCancelled else { return }
+      streamEnded()
+    } catch {
       guard version == generation else { return }
-      loading = false
-      self.error = error.localizedDescription
+      guard !Task.isCancelled else { status = .paused; return }
+      if PlaybackStatus.recoverable(error) {
+        status = .unavailable(error.localizedDescription)
+        recoverFailure(verifyEnd: verifyEnd)
+      } else { status = .failed(error.localizedDescription); hls?.pause(); stopNetworkMonitor() }
     }
   }
   static func playbackURL(master: URL, variant: HLSVariant?, edgeURL: URL?) -> URL {
@@ -192,11 +223,14 @@ import SwiftUI
     }
   }
 
-  func configure(automatic: Bool, target: Double, highest: Bool) {
+  func configure(automatic: Bool, target: Double, highest: Bool, showBitrate: Bool = false) {
     let changedQuality = highest && !highestQuality
     automaticCatchUp = automatic
     targetBuffer = target.isFinite ? min(20, max(0, target)) : 3
     highestQuality = highest
+    reportsBitrate = showBitrate
+    if !showBitrate { bitrate = nil }
+    nextBitrateCheck = 0
     nextBufferCheck = 0
     if changedQuality { selectPreferredQuality() }
     updateTime()
@@ -244,6 +278,7 @@ import SwiftUI
     guard id != qualityID || requestedEdge != edge else { return }
     let variant = variants.first { $0.id == id }
     guard id == nil || variant != nil else { return }
+    cancelRetry()
     endCatchUp()
     setAutomaticCatchUp(false)
     selection?.cancel()
@@ -251,6 +286,8 @@ import SwiftUI
     let change = selectionVersion
     let version = generation
     switching = true
+    bitrate = nil
+    nextBitrateCheck = 0
     settingsError = nil
     selection = Task { [weak self] in
       guard let self else { return }
@@ -276,6 +313,7 @@ import SwiftUI
         settingsError = "That server didn’t return playable media. Your current stream was kept."
       }
       switching = false
+      updateTime()
     }
   }
 
@@ -289,8 +327,9 @@ import SwiftUI
     chooseQuality(variant.id, edge: edge)
   }
 
-  func reload() {
+  func reload(resume: Bool = false) {
     guard let source else { return }
+    if resume { wantsPlayback = true }
     failures = 0
     cancelRetry()
     let attempt = retryVersion
@@ -298,6 +337,7 @@ import SwiftUI
       defer { if let self, self.retryVersion == attempt { self.retry = nil } }
       guard let self else { return }
       await load(source, force: true)
+      resumeRecovery(after: attempt)
     }
   }
   func toggle() {
@@ -307,6 +347,7 @@ import SwiftUI
     updateTime()
   }
   func stop() {
+    stopNetworkMonitor()
     endCatchUp()
     setAutomaticCatchUp(false)
     generation += 1
@@ -330,14 +371,12 @@ import SwiftUI
     variants = []
     qualityID = nil
     edge = nil
-    loading = false
-    buffering = false
+    status = .stopped
     waitingForAds = false
-    playing = false
     playbackRate = 0
     resolution = ""
+    bitrate = nil
     buffered = 0
-    error = nil
     settingsError = nil
     title = ""
     wantsPlayback = false
@@ -352,8 +391,9 @@ import SwiftUI
   }
 
   private func streamEnded() {
-    guard !loading, error == nil else { return }
-    error = "This stream has ended."
+    stopNetworkMonitor()
+    status = .ended
+    bitrate = nil
     wantsPlayback = false
     endCatchUp()
     setAutomaticCatchUp(false)
@@ -361,14 +401,13 @@ import SwiftUI
     cancelRetry()
     stall?.cancel()
     stall = nil
-    playing = false
-    buffering = false
     playbackRate = 0
     updateNowPlaying()
   }
 
-  private func recoverFailure() {
-    guard retry == nil, !loading else { return }
+  private func recoverFailure(verifyEnd: Bool = false) {
+    guard retry == nil, !loading, !switching, wantsPlayback, !Task.isCancelled else { return }
+    healthySince = nil
     if waitingForAds, let gateway = playlistGateway, let source, let media {
       let version = generation
       retryVersion += 1
@@ -383,34 +422,60 @@ import SwiftUI
           guard generation == version, !Task.isCancelled else { return }
           installHLS(url, variant: variant)
         } else { await load(source, force: true) }
+        resumeRecovery(after: attempt)
       }
       return
     }
-    guard failures < 2, let source else {
-      error = "Video playback failed after refreshing its source. Try another channel or retry."
+    guard PlaybackStatus.retryDelay(attempt: failures) != nil, let source else {
+      status = .unavailable("Video playback is temporarily unavailable after refreshing its source. Retry to reconnect.")
+      bitrate = nil
+      hls?.pause()
       return
     }
-    failures += 1
-    let version = generation
+    status = .recovering
     retryVersion += 1
     let attempt = retryVersion
     retry = Task { [weak self] in
       defer { if let self, self.retryVersion == attempt { self.retry = nil } }
-      do { try await Task.sleep(for: .seconds(2)) } catch { return }
-      guard let self, generation == version else { return }
-      await load(source, force: true)
+      guard let self else { return }
+      while let delay = PlaybackStatus.retryDelay(attempt: failures) {
+        failures += 1
+        status = .recovering
+        do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+        guard retryVersion == attempt, self.source == source, wantsPlayback, !Task.isCancelled else { return }
+        await load(source, force: true, verifyEnd: verifyEnd)
+        guard retryVersion == attempt, !Task.isCancelled else { return }
+        if case .unavailable = status { continue }
+        guard status.error == nil else { return }
+        if pipelineFailed { continue }
+        return
+      }
+      if status.error == nil { status = .unavailable("Video playback is temporarily unavailable after refreshing its source. Retry to reconnect.") }
+      bitrate = nil
+      hls?.pause()
     }
   }
+  private func resumeRecovery(after attempt: Int) {
+    guard retryVersion == attempt, !Task.isCancelled else { return }
+    if case .unavailable = status { retry = nil; recoverFailure() }
+    else if status.error == nil, pipelineFailed { retry = nil; recoverFailure(verifyEnd: true) }
+  }
   private func updateTime() {
+    guard status.error == nil else { return }
     waitingForAds = playlistGateway?.waiting ?? false
     if let hls {
       let engine = hls.engine
-      if engine.playbackState == .finished, hls.error == nil {
-        streamEnded()
+      if pipelineFailed {
+        recoverFailure(verifyEnd: true)
         return
       }
-      playing = engine.isPlaying && engine.loadState == .playable
-      buffering = wantsPlayback && engine.loadState != .playable
+      if !loading, retry == nil {
+        status = !wantsPlayback ? .paused : engine.loadState != .playable ? .buffering : engine.isPlaying ? .playing : .paused
+      }
+      if playing {
+        if healthySince == nil { healthySince = Date() }
+        if let healthySince, Date().timeIntervalSince(healthySince) >= 30 { failures = 0 }
+      } else { healthySince = nil }
       buffered = max(0, engine.playableTime - engine.currentPlaybackTime)
       if catchingUp, wantsPlayback {
         hls.setRate(buffered > (engine.playbackRate > 1 ? 0.5 : 1) ? 2 : 1)
@@ -418,7 +483,14 @@ import SwiftUI
       playbackRate = playing ? engine.playbackRate : 0
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
-      if hls.error != nil { recoverFailure() }
+      if reportsBitrate, !loading, !switching, ProcessInfo.processInfo.systemUptime >= nextBitrateCheck {
+        nextBitrateCheck = ProcessInfo.processInfo.systemUptime + 1
+        let video = engine.tracks(mediaType: .video).first { $0.isEnabled }
+        let track = video ?? engine.tracks(mediaType: .audio).first { $0.isEnabled }
+        // A spliced ad-free backup can differ from the master's bitrate metadata.
+        let value = playlistGateway?.usingBackup == true ? nil : track.flatMap { StreamBitrate($0.bitRate, audioOnly: video == nil) }
+        if bitrate != value { bitrate = value }
+      }
       if let controller = engine.pipController, controller.delegate !== self {
         controller.delegate = self
         controller.canStartPictureInPictureAutomaticallyFromInline = true
@@ -464,24 +536,52 @@ import SwiftUI
   }
 
   private func setPlayback(_ active: Bool) {
-    if active { hls?.play() } else { hls?.pause() }
+    if active { monitorNetwork(); status = .buffering; hls?.play() }
+    else {
+      stopNetworkMonitor()
+      cancelRetry(); stall?.cancel(); stall = nil
+      status = .paused
+      hls?.pause()
+    }
+  }
+
+  private func monitorNetwork() {
+    guard network == nil else { return }
+    networkVersion += 1
+    let version = networkVersion
+    let monitor = NWPathMonitor()
+    monitor.pathUpdateHandler = { [weak self] path in
+      let available = path.status == .satisfied
+      Task { @MainActor [weak self] in
+        guard let self, networkVersion == version else { return }
+        let restored = connectivity.update(available: available)
+        if restored, wantsPlayback, case .unavailable = status {
+          failures = 0
+          recoverFailure(verifyEnd: true)
+        }
+      }
+    }
+    network = monitor
+    monitor.start(queue: DispatchQueue(label: "Streamstiny.PlaybackNetwork"))
+  }
+  private func stopNetworkMonitor() {
+    networkVersion += 1
+    network?.cancel(); network = nil
+    connectivity = PlaybackConnectivity()
   }
 
   private func scheduleRecovery() {
-    guard !waitingForAds, stall == nil, failures < 2,
-      Date().timeIntervalSince(recoveredAt) > 60, let source
+    guard !waitingForAds, retry == nil, stall == nil
     else { return }
     let version = generation
     stall = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(12)) } catch { return }
       guard let self, generation == version, wantsPlayback, !catchingUp, buffering
       else { return }
-      recoveredAt = Date()
-      failures += 1
       // Return an unresponsive manual edge to the provider route before refreshing its grant.
       edge = nil
-      await load(source, force: true)
-      if !Task.isCancelled { stall = nil }
+      stall = nil
+      recoverFailure(verifyEnd: true)
     }
   }
 
@@ -529,6 +629,7 @@ struct PlayerView: View {
   @AppStorage("highestQuality") private var highestQuality = false
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
+  @AppStorage("showBitrate") private var showBitrate = false
 
   var body: some View {
     @Bindable var controls = controls
@@ -560,11 +661,18 @@ struct PlayerView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
           .padding(.leading, 8).padding(.top, controls.visible ? 60 : 8)
       }
+      if showBitrate {
+        Text(playback.bitrate?.label ?? "Bitrate unavailable").font(.caption2.monospacedDigit())
+          .padding(.horizontal, 8).padding(.vertical, 4)
+          .background(.black.opacity(0.65), in: Capsule()).foregroundStyle(.white).allowsHitTesting(false)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+          .padding(.leading, 8).padding(.bottom, controls.visible ? 64 : 8)
+      }
       if let message = blocked ?? playback.error {
         VStack(spacing: 12) {
           Image(systemName: "play.slash").font(.title)
           Text(message).font(.callout).multilineTextAlignment(.center).allowsHitTesting(false)
-          if blocked == nil { Button("Retry") { playback.reload() }.buttonStyle(.bordered) }
+          if blocked == nil { Button("Retry") { playback.reload(resume: true) }.buttonStyle(.bordered) }
         }.padding().foregroundStyle(.white)
       }
       if controls.visible { playerControls.transition(.opacity) }
@@ -588,6 +696,7 @@ struct PlayerView: View {
     .onChange(of: automaticCatchUp) { _, _ in configurePlayback() }
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }
     .onChange(of: highestQuality) { _, _ in configurePlayback() }
+    .onChange(of: showBitrate) { _, _ in configurePlayback() }
     .onReceive(NotificationCenter.default.publisher(for: .twitchAccountChanged)) { _ in
       if source.provider == .twitch { playback.reload() }
     }
@@ -608,7 +717,7 @@ struct PlayerView: View {
 
   private func configurePlayback() {
     playback.configure(
-      automatic: automaticCatchUp, target: targetBuffer, highest: highestQuality)
+      automatic: automaticCatchUp, target: targetBuffer, highest: highestQuality, showBitrate: showBitrate)
   }
 
   private var speedLabel: String {

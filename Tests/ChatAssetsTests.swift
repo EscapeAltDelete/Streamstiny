@@ -59,6 +59,8 @@ enum ChatAssetsTests {
     let configuration = try ChatAssetConfiguration.discover(in: html)
     precondition(configuration.base.host == "r2cdn.destiny.gg")
     precondition(configuration.url("emotes/emotes.json").absoluteString == "https://r2cdn.destiny.gg/emotes/emotes.json?_=one")
+    let unversioned = try ChatAssetConfiguration.discover(in: html.replacingOccurrences(of: "one", with: ""))
+    precondition(unversioned.cacheKey.isEmpty, "Production permits an empty cache key")
     for source in [html.replacingOccurrences(of: "r2cdn.destiny.gg", with: "destiny.gg.evil.test"),
       html.replacingOccurrences(of: "https:", with: "http:"), html.replacingOccurrences(of: "r2cdn.destiny.gg", with: "user@r2cdn.destiny.gg"), ""] {
       do { _ = try ChatAssetConfiguration.discover(in: source); preconditionFailure("Reject invalid discovery configuration") }
@@ -85,6 +87,15 @@ enum ChatAssetsTests {
     precondition(!formatted.contains("<script>") && formatted.contains("&lt;script&gt;"))
     precondition(formatted.components(separatedBy: "class=\"emote Listening").count == 2)
     precondition(formatted.contains("Listening,"), "Emotes match complete, case-sensitive tokens")
+    let names = ["ARRIVE", "BlackGuyLaptop", "Classic", "HUH"]
+    let catalog = Dictionary(uniqueKeysWithValues: names.map { ($0, url) })
+    let mixed = ChatHTML.body("hello ARRIVE ARRIVE BlackGuyLaptop Classic HUH end", emote: { catalog[$0] })
+    precondition(mixed.components(separatedBy: "class=\"emote ").count == 6)
+    for word in names {
+      precondition(ChatHTML.body(word.lowercased(), emote: { catalog[$0] }) == word.lowercased())
+      precondition(ChatHTML.body("pre" + word + "post", emote: { catalog[$0] }) == "pre" + word + "post")
+    }
+    precondition(ChatHTML.body("ARRIVEHUH", emote: { catalog[$0] }) == "ARRIVEHUH")
     if case .reloadAssets(let key) = try ChatProtocol.decode(#"REFRESHCHATASSETS {"cacheKey":"two"}"#) { precondition(key == "two") }
     else { preconditionFailure("Retain authoritative cache key") }
     if case .reload = try ChatProtocol.decode("RELOAD") {} else { preconditionFailure("Handle bodyless control commands") }
@@ -171,6 +182,55 @@ enum ChatAssetsTests {
     let offline = EmoteStore(assets: savedLoader)
     await offline.load(force: true)
     precondition(offline.catalog["Free"] != nil && offline.status != nil)
+    let fixture: [String: String] = [
+      "/embed/chat": html.replacingOccurrences(of: "one", with: ""),
+      "/emotes/emotes.json": #"[{"prefix":"NewEmote","image":[{"url":"https://r2cdn.destiny.gg/emotes/new.png"}]}]"#,
+      "/flairs/flairs.json": #"[{"name":"flair127","label":"New badge","priority":50,"hidden":false}]"#,
+      "/emotes/emotes.css": ".emote.NewEmote {width:32px;height:32px}",
+      "/flairs/flairs.css": ".flair.flair127 {width:18px;height:18px}",
+    ]
+    // A fresh process loads the last good snapshot through an outage, then its
+    // scheduled retry must synchronize without a reconnect, reinstall or tap.
+    let recovering = EmoteStore(assets: savedLoader, retryInterval: 0.05)
+    await recovering.load(force: true)
+    precondition(recovering.catalog["Free"] != nil && recovering.status != nil)
+    ChatAssetProtocol.prepare { request in
+      .init(status: 200, data: Data(fixture[request.url!.path]!.utf8), delay: 0)
+    }
+    for _ in 0..<100 where recovering.status != nil { try await Task.sleep(for: .milliseconds(10)) }
+    precondition(recovering.status == nil && recovering.catalog["NewEmote"] != nil && recovering.snapshot?.configuration.cacheKey == "")
+    precondition(ChatAssetProtocol.counts.requests == 5, "One scheduled conditional refresh downloads each metadata resource once")
+    let recoveredRevision = recovering.catalogRevision
+    await recovering.load(force: true)
+    precondition(ChatAssetProtocol.counts.requests == 10 && recovering.catalogRevision == recoveredRevision,
+      "An unversioned catalog revalidates without rebuilding unchanged rendering")
+    ChatAssetProtocol.prepare { request in
+      let value = request.url!.path == "/emotes/emotes.css" ? "<html>.emote Error</html>" : fixture[request.url!.path]!
+      return .init(status: 200, data: Data(value.utf8), delay: 0)
+    }
+    await recovering.load(force: true)
+    precondition(recovering.status != nil && recovering.catalog["NewEmote"] != nil)
+    let onDisk = await savedLoader.savedSnapshot()
+    precondition(onDisk == recovering.snapshot, "An HTTP-200 error page cannot overwrite validated assets")
+    recovering.releaseMemory(suspend: true)
+    let requestsAfterSuspend = ChatAssetProtocol.counts.requests
+    try await Task.sleep(for: .milliseconds(100))
+    precondition(ChatAssetProtocol.counts.requests == requestsAfterSuspend, "No background refresh while suspended")
+    ChatAssetProtocol.prepare { request in .init(status: 200, data: Data(fixture[request.url!.path]!.utf8), delay: 0) }
+    recovering.resume()
+    await recovering.load(force: true)
+    for _ in 0..<3 {
+      let revision = recovering.recoveryRevision
+      recovering.assetFailed(); recovering.assetFailed()
+      for _ in 0..<100 where recovering.recoveryRevision == revision { try await Task.sleep(for: .milliseconds(10)) }
+      precondition(recovering.recoveryRevision == revision + 1, "One shared retry repairs failed resources without remounting rows")
+    }
+    let afterImageRetries = ChatAssetProtocol.counts.requests
+    recovering.assetFailed()
+    try await Task.sleep(for: .milliseconds(250))
+    precondition(ChatAssetProtocol.counts.requests == afterImageRetries, "Permanent image failures cannot retry indefinitely")
+    recovering.releaseMemory(suspend: true)
+    for value in [store, warmStore, offline] { value.releaseMemory(suspend: true) }
     print("Passed chat asset discovery, native CSS transport, permissions, escaping, deduplication, concurrency, cancellation, updates, and offline-cache regressions")
   }
 }

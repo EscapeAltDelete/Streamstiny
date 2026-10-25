@@ -179,6 +179,50 @@ import WebKit
     history["sample_ended_unix"] = Date().timeIntervalSince1970
     history["app_resident_bytes"] = residentBytes()
     results["retained_plain_history"] = history
+    if let web = historyWeb {
+      let _: Bool = try await javascript(web, "window.scrollTo(0,document.scrollingElement.scrollHeight/2);return true;")
+      try await Task.sleep(for: .milliseconds(150))
+      try await startBrowserFrames(web)
+      let _: Bool = try await javascript(web, """
+        window.scrollProbe={writes:0,delays:[]};
+        const by=window.scrollBy.bind(window),to=window.scrollTo.bind(window),seen=new WeakSet(),start=Date.now();
+        window.scrollBy=(...args)=>{scrollProbe.writes++;by(...args)};
+        window.scrollTo=(...args)=>{scrollProbe.writes++;to(...args)};
+        const observer=new MutationObserver(entries=>{for(const entry of entries)for(const node of entry.addedNodes){
+          if(!node.querySelectorAll)continue;
+          for(const time of node.querySelectorAll('[data-unixtimestamp]'))if(!seen.has(time)){
+            seen.add(time);const stamp=Number(time.dataset.unixtimestamp);
+            if(stamp>=start)scrollProbe.delays.push(Date.now()-stamp);
+          }
+        }});
+        observer.observe(document.getElementById('content'),{childList:true,subtree:true});
+        window.userScrolling=true;
+        window.dispatchEvent(new PointerEvent('pointerdown'));
+        requestAnimationFrame(function move(){if(!userScrolling)return;by(0,-2);requestAnimationFrame(move)});
+        window.stopScrollProbe=()=>{observer.disconnect();window.scrollBy=by;window.scrollTo=to};
+        return true;
+        """)
+      let started = Date().timeIntervalSince1970
+      let frames = Frames(); frames.start(); ChatBenchmarkMetrics.refreshTimes = []
+      for index in 0..<100 {
+        feed.messages = Array((feed.messages + (0..<5).map { number in
+          ChatMessage(payload: ["uuid": "scroll-\(index)-\(number)", "nick": "Benchmark",
+            "data": "Incoming while reading history \(index)-\(number)", "timestamp": Date().timeIntervalSince1970 * 1000])
+        }).suffix(5000))
+        try await Task.sleep(for: .milliseconds(50))
+      }
+      var scrolling = frames.stop()
+      for (key, value) in refreshMetrics() { scrolling[key] = value }
+      for (key, value) in try await browserFrames(web) { scrolling[key] = value }
+      let during: Double = try await javascript(web, "window.userScrolling=false;window.dispatchEvent(new PointerEvent('pointerup'));return scrollProbe.writes;")
+      try await Task.sleep(for: .milliseconds(200))
+      let extra: [String: Double] = try await javascript(web, "const p=scrollProbe,d=p.delays.sort((a,b)=>a-b);stopScrollProbe();return {scroll_writes_during_interaction:during,scroll_writes_after_interaction:p.writes-during,arrival_dom_median_ms:d[Math.floor(d.length/2)]||0,arrival_dom_p95_ms:d[Math.floor(d.length*.95)]||0,observed_messages:d.length};", arguments: ["during": during])
+      for (key, value) in extra { scrolling[key] = value }
+      scrolling["sample_started_unix"] = started
+      scrolling["sample_ended_unix"] = Date().timeIntervalSince1970
+      scrolling["app_resident_bytes"] = residentBytes()
+      results["scrolling_with_incoming_messages"] = scrolling
+    }
     // Model production hiding: remove the renderer while retaining the feed/store.
     feed.visible = false
     try await Task.sleep(for: .seconds(2))
