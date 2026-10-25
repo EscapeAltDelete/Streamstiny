@@ -17,9 +17,13 @@ on:
         options: ['18.5', '17.5']
         default: '18.5'
       include_player:
-        description: Also validate the real player and settings with pinned playback dependencies
+        description: Also validate the real player and settings on iOS Simulator
         type: boolean
         default: false
+      test_filter:
+        description: Optional XCTest class or test identifier (empty runs the complete suite)
+        type: string
+        default: ''
       baseline_ref:
         description: Optional commit to benchmark afterward on the same runner with cold image caches
         type: string
@@ -38,6 +42,7 @@ jobs:
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
       CHAT_INCLUDE_PLAYER: ${{ inputs.include_player && '1' || '' }}
+      TEST_FILTER: ${{ inputs.test_filter }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -62,6 +67,12 @@ jobs:
           unzip -q "$archive" -d "$RUNNER_TEMP/xcodegen"
           python3 scripts/prepare_chat_benchmark.py
           "$RUNNER_TEMP/xcodegen/xcodegen/bin/xcodegen" generate --spec build/chat-benchmark/project.yml
+      - name: Prepare production playback dependencies
+        if: inputs.include_player
+        run: |
+          test '${{ inputs.platform }}' = simulator
+          xcodebuild -resolvePackageDependencies -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'generic/platform=iOS Simulator' -clonedSourcePackagesDirPath build/SourcePackages > build/player-dependencies.log 2>&1
+          python3 scripts/patch_playback.py
       - name: Measure production Foundation hot paths
         run: bash scripts/benchmark_runtime.sh > build/runtime-optimized.log
       - name: Prepare pinned iOS Simulator
@@ -87,7 +98,9 @@ jobs:
       - name: Measure real chat and picker on iOS Simulator
         if: inputs.platform == 'simulator'
         run: |
-          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -parallel-testing-enabled NO -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
+          filter=()
+          if [ -n "$TEST_FILTER" ]; then filter=("-only-testing:ChatBenchmarkTests/$TEST_FILTER"); fi
+          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" -parallel-testing-enabled NO -clonedSourcePackagesDirPath build/SourcePackages -test-timeouts-enabled YES -maximum-test-execution-time-allowance 240 -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult "${filter[@]}" > build/chat-benchmark.log 2>&1
       - name: Measure real UIKit chat on Mac Catalyst
         if: inputs.platform == 'catalyst'
         run: |

@@ -74,8 +74,6 @@ else:
 (source / "Host.swift").write_text(host)
 for path in production.glob("Chat*.js"):
     text = path.read_text().replace("!matchMedia('(prefers-reduced-motion: reduce)').matches", "true")
-    if include_player and path.name == "PlayerView.swift":
-        text = text.replace("        let value = !reportsBitrate", "        if reportsBitrate { ChatBenchmarkMetrics.bitrateSamples += 1 }\n        let value = !reportsBitrate")
     (source / path.name).write_text(text)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
 shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)
