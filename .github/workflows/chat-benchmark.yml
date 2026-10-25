@@ -15,6 +15,10 @@ on:
         description: Optional commit to benchmark afterward on the same runner with cold image caches
         type: string
         default: ''
+      shared_assets:
+        description: Use current asset loading for both refs to isolate chat rendering
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -100,6 +104,7 @@ jobs:
         if: success() && inputs.platform == 'catalyst' && inputs.baseline_ref != ''
         env:
           BASELINE_REF: ${{ inputs.baseline_ref }}
+          CHAT_ASSET_SOURCE_ROOT: ${{ inputs.shared_assets && format('{0}/Streamstiny', github.workspace) || '' }}
         run: |
           [[ "$BASELINE_REF" =~ ^[0-9a-f]{40}$ ]]
           git fetch --no-tags origin "$BASELINE_REF"

@@ -12,6 +12,12 @@ source.mkdir(parents=True, exist_ok=True)
 production = Path(sys.argv[1] if len(sys.argv) > 1 else ".") / "Streamstiny"
 names = [*production.glob("Chat*.swift"), *production.glob("Emote*.swift")]
 names += [production / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
+if asset_root := os.environ.get("CHAT_ASSET_SOURCE_ROOT"):
+    # Explicitly isolate renderer changes when old discovery/format support no
+    # longer works with the live upstream catalog. Both copies use the same assets.
+    asset_names = ["ChatAssets.swift", "ChatAssetLoader.swift", "ChatImageFormat.swift", "EmoteStore.swift"]
+    names = [path for path in names if path.name not in asset_names]
+    names += [Path(asset_root) / name for name in asset_names]
 for path in names:
     text = path.read_text()
     # The hosted runner forces Reduce Motion. Compare both implementations with
