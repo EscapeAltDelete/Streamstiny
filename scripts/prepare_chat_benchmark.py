@@ -10,8 +10,11 @@ source = root / "Sources"
 shutil.rmtree(source, ignore_errors=True)
 source.mkdir(parents=True, exist_ok=True)
 production = Path(sys.argv[1] if len(sys.argv) > 1 else ".") / "Streamstiny"
+include_player = os.environ.get("CHAT_INCLUDE_PLAYER") == "1"
 names = [*production.glob("Chat*.swift"), *production.glob("Emote*.swift")]
 names += [production / name for name in ["AssetDownloadQueue.swift", "StreamSource.swift", "StreamDirectory.swift", "DestinyAccount.swift", "TokenStore.swift"]]
+if include_player:
+    names = [path for path in production.glob("*.swift") if path.name != "StreamstinyApp.swift"]
 if asset_root := os.environ.get("CHAT_ASSET_SOURCE_ROOT"):
     # Explicitly isolate renderer changes when old discovery/format support no
     # longer works with the live upstream catalog. Both copies use the same assets.
@@ -31,8 +34,15 @@ for path in names:
         text = text.replace("      guard ready else { return }", """      guard ready else { return }
       let refreshStarted = ProcessInfo.processInfo.systemUptime
       defer { ChatBenchmarkMetrics.refreshTimes.append((ProcessInfo.processInfo.systemUptime - refreshStarted) * 1000) }""", 1)
+    if include_player and path.name == "PlayerView.swift":
+        text = text.replace("        let value = !reportsBitrate", "        if reportsBitrate { ChatBenchmarkMetrics.bitrateSamples += 1 }\n        let value = !reportsBitrate")
     (source / path.name).write_text(text)
 host = Path("Benchmarks/Chat/Host.swift").read_text()
+if include_player:
+    start = host.index("enum PlaybackResolver {")
+    end = host.index("@MainActor enum ChatBenchmarkMetrics", start)
+    host = host[:start] + host[end:]
+    host = host.replace("  static var requests = 0", "  static var bitrateSamples = 0\n  static var requests = 0")
 if "let assets: ChatAssetLoader" in (source / "EmoteStore.swift").read_text():
     host += '''\n@MainActor extension EmoteStore {
   func benchmarkMetrics() async -> [String: Double] {
@@ -64,6 +74,8 @@ else:
 (source / "Host.swift").write_text(host)
 for path in production.glob("Chat*.js"):
     text = path.read_text().replace("!matchMedia('(prefers-reduced-motion: reduce)').matches", "true")
+    if include_player and path.name == "PlayerView.swift":
+        text = text.replace("        let value = !reportsBitrate", "        if reportsBitrate { ChatBenchmarkMetrics.bitrateSamples += 1 }\n        let value = !reportsBitrate")
     (source / path.name).write_text(text)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
 shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)
@@ -104,6 +116,14 @@ schemes:
     test:
       targets: [ChatBenchmarkTests]
 """)
+if include_player:
+    shutil.copy("Benchmarks/Chat/PlayerAcceptanceTests.swift", root)
+    project = root / "project.yml"
+    text = project.read_text().replace("options:\n", "include: [../../dependencies.yml]\noptions:\n", 1)
+    text = text.replace("    sources: [Sources]", "    sources: [Sources]\n    dependencies:\n      - package: KSPlayer", 1)
+    text = text.replace("NativeEmoteChecks.swift]", "NativeEmoteChecks.swift, PlayerAcceptanceTests.swift]")
+    text = text.replace("        INFOPLIST_KEY_UILaunchScreen_Generation: YES", "        INFOPLIST_KEY_UILaunchScreen_Generation: YES\n        INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES")
+    project.write_text(text)
 if (source / "ChatRenderer.js").exists():
     project = root / "project.yml"
     project.write_text(project.read_text().replace("sources: [Sources]", """sources:

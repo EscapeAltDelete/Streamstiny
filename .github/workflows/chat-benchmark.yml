@@ -16,6 +16,10 @@ on:
         type: choice
         options: ['18.5', '17.5']
         default: '18.5'
+      include_player:
+        description: Also validate the real player and settings with pinned playback dependencies
+        type: boolean
+        default: false
       baseline_ref:
         description: Optional commit to benchmark afterward on the same runner with cold image caches
         type: string
@@ -33,6 +37,7 @@ jobs:
     timeout-minutes: 35
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      CHAT_INCLUDE_PLAYER: ${{ inputs.include_player && '1' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
