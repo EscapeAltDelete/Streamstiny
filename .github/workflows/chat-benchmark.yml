@@ -110,7 +110,9 @@ jobs:
           python3 scripts/profile_chat_processes.py build/chat-processes.jsonl &
           probe=$!
           trap 'kill "$probe" 2>/dev/null || true' EXIT
-          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=macOS,variant=Mac Catalyst' -parallel-testing-enabled NO -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult > build/chat-benchmark.log 2>&1
+          filter=()
+          if [ -n "$TEST_FILTER" ]; then filter=("-only-testing:ChatBenchmarkTests/$TEST_FILTER"); fi
+          xcodebuild test -project build/chat-benchmark/ChatBenchmark.xcodeproj -scheme ChatBenchmark -destination 'platform=macOS,variant=Mac Catalyst' -parallel-testing-enabled NO -derivedDataPath build/chat-derived -resultBundlePath build/chat-results.xcresult "${filter[@]}" > build/chat-benchmark.log 2>&1
       - name: Collect screenshots and measurements
         if: always()
         run: |
