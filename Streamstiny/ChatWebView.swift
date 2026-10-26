@@ -10,6 +10,7 @@ import OSLog
   private var menuRequest: [String: Any] = [:]
   private var sentCatalog = -1
   private var sentManifest = -1
+  private static let parameters = ["update": ["payload"], "assetFinished": ["url", "success"], "scrollToBottom": []]
   private(set) var ready = false
   init(emotes: EmoteStore) { self.emotes = emotes }
 
@@ -109,9 +110,8 @@ import OSLog
   }
   func call(_ method: String, arguments: [String: Any], completion: (() -> Void)? = nil) {
     guard ready, let webView else { completion?(); return }
-    let names: [String: [String]] = ["update": ["payload"], "assetFinished": ["url", "success"]]
-    guard let parameters = names[method] else { completion?(); return }
-    webView.callAsyncJavaScript("window.ChatRenderer.\(method)(\(parameters.joined(separator: ",")))", arguments: arguments, in: nil, in: .page) { result in
+    guard let parameters = Self.parameters[method] else { completion?(); return }
+    webView.callAsyncJavaScript("window.ChatRenderer.\(method)(\(parameters.joined(separator: ","))); return null;", arguments: arguments, in: nil, in: .page) { result in
       if case .failure(let error) = result {
         Logger(subsystem: "gg.streamstiny.app", category: "Chat rendering").error("Renderer call failed: \(String(describing: error), privacy: .public)")
       }

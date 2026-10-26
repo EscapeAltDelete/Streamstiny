@@ -32,6 +32,7 @@ struct ChatList: UIViewRepresentable {
     private var sending = false
     private var pending = false
     private var revealed: Set<String> = []
+    private weak var bottomButton: UIButton?
     private let formatter = DateFormatter()
     private let announcement = UIImage(systemName: "megaphone.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal).pngData()?.base64EncodedString()
     private struct RenderContext: Equatable {
@@ -54,7 +55,37 @@ struct ChatList: UIViewRepresentable {
       let options: String
     }
     init(_ parent: ChatList) { self.parent = parent; super.init(emotes: parent.emotes) }
-    override func reset() { inputs.removeAll(); renderContext = nil; ids = []; sending = false; pending = false }
+    override func makeWebView() -> WKWebView {
+      let view = super.makeWebView()
+      var configuration = UIButton.Configuration.filled()
+      configuration.image = UIImage(systemName: "arrow.down")
+      configuration.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(textStyle: .body, scale: .medium)
+      configuration.cornerStyle = .capsule
+      let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in
+        self?.call("scrollToBottom", arguments: [:])
+      })
+      button.accessibilityLabel = "Scroll to bottom"
+      button.accessibilityHint = "Return to the latest messages and follow live chat."
+      button.accessibilityIdentifier = "chatScrollToBottom"
+      button.isHidden = true; button.alpha = 0; button.isUserInteractionEnabled = false
+      button.layer.shadowColor = UIColor.black.cgColor
+      button.layer.shadowOpacity = 0.15; button.layer.shadowRadius = 4
+      button.layer.shadowOffset = CGSize(width: 0, height: 2)
+      button.translatesAutoresizingMaskIntoConstraints = false
+      view.addSubview(button)
+      NSLayoutConstraint.activate([
+        button.widthAnchor.constraint(equalToConstant: 44), button.heightAnchor.constraint(equalToConstant: 44),
+        button.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+        button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+      ])
+      bottomButton = button
+      return view
+    }
+    override func reset() {
+      inputs.removeAll(); renderContext = nil; ids = []; sending = false; pending = false
+      bottomButton?.layer.removeAllAnimations()
+      bottomButton?.alpha = 0; bottomButton?.isHidden = true; bottomButton?.isUserInteractionEnabled = false
+    }
     override func refresh() {
       guard ready else { return }
       if sending { pending = true; return }
@@ -149,6 +180,17 @@ struct ChatList: UIViewRepresentable {
         "background": background, "combo": combo, "comboGroup": "x\(group)", "accessibility": "\(title): \(hidden ? "Message deleted" : message.text)"]
     }
     override func handle(_ request: [String: Any]) {
+      if request["action"] as? String == "following", let following = request["value"] as? Bool, let button = bottomButton {
+        let show = !following
+        guard button.isUserInteractionEnabled != show else { return }
+        button.isUserInteractionEnabled = show
+        if show { button.isHidden = false }
+        UIView.animate(withDuration: UIAccessibility.isReduceMotionEnabled ? 0 : 0.18,
+          delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+          button.alpha = show ? 1 : 0
+        } completion: { _ in if button.alpha == 0 { button.isHidden = true } }
+        return
+      }
       if request["action"] as? String == "link", let address = request["url"] as? String,
         let url = URL(string: address), ["https", "http"].contains(url.scheme) { open(url) }
       if request["action"] as? String == "profile", let id = request["id"] as? String,

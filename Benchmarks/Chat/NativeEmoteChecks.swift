@@ -292,3 +292,77 @@ import ImageIO
     print("AVIF_DIAGNOSIS " + String(decoding: try JSONSerialization.data(withJSONObject: results), as: UTF8.self))
   }
 }
+
+@MainActor extension ChatBenchmarkTests {
+  func testScrollToBottomButton() async throws {
+    guard ChatBenchmarkMetrics.hasScrollToBottom else { throw XCTSkip("Baseline predates the scroll-to-bottom feature") }
+    let store = EmoteStore(), chat = ChatStore()
+    var messages = (0..<500).map { ChatMessage(payload: ["uuid": "bottom-\($0)", "nick": "EscapeAltDelete", "data": "Message \($0)"]) }
+    func list() -> ChatList {
+      ChatList(messages: messages, emotes: store, fontSize: 16, timestamps: false,
+        onReply: { _ in }, onWhisper: { _ in }, onIgnore: { _ in }, onStream: { _ in }, chat: chat)
+    }
+    let coordinator = list().makeCoordinator(), web = coordinator.makeWebView()
+    defer { coordinator.stop(); web.removeFromSuperview() }
+    let window = try XCTUnwrap((UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first)
+    let host = UIViewController(); host.view.backgroundColor = .systemBackground
+    window.rootViewController = host; window.makeKeyAndVisible()
+    host.view.addSubview(web); web.frame = window.bounds; web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+    host.view.layoutIfNeeded()
+    try await waitForRenderer(web)
+    let button = try XCTUnwrap(web.subviews.compactMap { $0 as? UIButton }.first { $0.accessibilityIdentifier == "chatScrollToBottom" })
+    for _ in 0..<100 {
+      let distance: Double = try await javascript(web, "return Math.abs(document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight-document.scrollingElement.scrollTop);")
+      if distance < 2, button.isHidden { break }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(button.isHidden, "Following live messages needs no floating control")
+    for size in [CGSize(width: min(390, window.bounds.width), height: min(600, window.bounds.height)), CGSize(width: window.bounds.width, height: min(360, window.bounds.height))] {
+      web.frame.size = size; web.layoutIfNeeded()
+      try await Task.sleep(for: .milliseconds(100))
+      let _: Bool = try await javascript(web, "dispatchEvent(new PointerEvent('pointerdown'));return true;")
+      web.scrollView.setContentOffset(CGPoint(x: 0, y: 500), animated: false)
+      for _ in 0..<50 {
+        let offset: Double = try await javascript(web, "return scrollY;")
+        if abs(offset - 500) < 1, abs(web.scrollView.contentOffset.y - 500) < 1, button.alpha == 1 { break }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let _: Bool = try await javascript(web, "dispatchEvent(new PointerEvent('pointerup'));return true;")
+      XCTAssertFalse(button.isHidden)
+      XCTAssertGreaterThanOrEqual(button.bounds.width, 44)
+      XCTAssertGreaterThanOrEqual(button.bounds.height, 44)
+      XCTAssertLessThanOrEqual(button.frame.maxX, web.bounds.width - 10)
+      XCTAssertLessThanOrEqual(button.frame.maxY, web.bounds.height - 10)
+      let before: Double = try await javascript(web, "return scrollY;")
+      XCTAssertEqual(before, 500, accuracy: 1, "Wait for WebKit to apply the requested reading position")
+      let incoming = ChatMessage(payload: ["uuid": UUID().uuidString, "nick": "EscapeAltDelete", "data": "Incoming while reading"])
+      messages.append(incoming)
+      coordinator.parent = list(); coordinator.refresh()
+      for _ in 0..<50 {
+        let shown: Bool = try await javascript(web, "return Boolean(document.querySelector('[data-message=\"'+id+'\"]'));", arguments: ["id": incoming.id])
+        if shown { break }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let after: Double = try await javascript(web, "return scrollY;")
+      XCTAssertEqual(before, after, accuracy: 1, "Reading position survives new arrivals")
+      snapshot(window, name: "scroll-to-bottom-\(Int(size.width))-\(Int(size.height))")
+      button.sendActions(for: .primaryActionTriggered)
+      for _ in 0..<12 {
+        messages.append(ChatMessage(payload: ["uuid": UUID().uuidString, "nick": "EscapeAltDelete", "data": "Arriving during jump"]))
+        coordinator.parent = list(); coordinator.refresh()
+        try await Task.sleep(for: .milliseconds(25))
+      }
+      for _ in 0..<100 {
+        let settled: Bool = try await javascript(web, "return Boolean(document.querySelector('[data-message=\"'+id+'\"]')) && Math.abs(document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight-document.scrollingElement.scrollTop)<2;", arguments: ["id": messages.last!.id])
+        if settled, button.isHidden { break }
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      let distance: Double = try await javascript(web, "return Math.abs(document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight-document.scrollingElement.scrollTop);")
+      XCTAssertLessThan(distance, 2, "The moving target must be the newest message")
+      XCTAssertTrue(button.isHidden)
+    }
+    coordinator.webViewWebContentProcessDidTerminate(web)
+    XCTAssertTrue(button.isHidden, "Renderer recovery resets stale presentation")
+    try await waitForRenderer(web)
+  }
+}

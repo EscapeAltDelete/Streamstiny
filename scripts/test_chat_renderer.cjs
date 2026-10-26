@@ -103,10 +103,17 @@ const execFile = promisify(require('node:child_process').execFile);
       assert.equal(dimensions[name].height, expected.height);
       if (name !== 'PepoPunch') assert.equal(dimensions[name].width, expected.width);
     }
+    async function readAt(y) {
+      await page.evaluate(y => {
+        dispatchEvent(new PointerEvent('pointerdown'));
+        scrollTo(0, y);
+        dispatchEvent(new PointerEvent('pointerup'));
+      }, y);
+    }
     // Preserve exact nodes and animation objects across incoming unrelated messages.
     const padding = Array.from({ length: 30 }, (_, index) => ({ id: String(index + 3), html: '<span class="text">padding</span>', classes: 'msg-chat msg-user', username: 'benchmark', accessibility: 'padding' }));
     await page.evaluate(records => ChatRenderer.update({ records, ids: [...Array(33)].map((_, index) => String(index)) }), padding);
-    await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(100);
+    await readAt(0); await page.waitForTimeout(100);
     await page.evaluate(() => { window.originalEmote = document.querySelector('.PepoPunch'); window.originalAnimation = originalEmote.getAnimations()[0]; });
     for (let i = 33; i < 133; i++) {
       await page.evaluate(row => ChatRenderer.update({ records: [row], ids: [...Array(Number(row.id) + 1)].map((_, index) => String(index)) }), { id: String(i), html: '<span class="text">new message</span>', classes: 'msg-chat msg-user', username: 'benchmark', accessibility: 'new message' });
@@ -129,14 +136,14 @@ const execFile = promisify(require('node:child_process').execFile);
     });
     await page.waitForTimeout(200);
     assert.equal(await page.locator('.PepoPunch').count(), 0, 'Distant rich content must leave layout');
-    await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+    await readAt(0); await page.waitForTimeout(200);
     assert(await page.evaluate(() => virtualEmote === document.querySelector('.PepoPunch')), 'Scrolling must restore the same emote nodes');
     assert(await page.locator('.PepoPunch').evaluate(node => node.getAnimations().every(animation => animation.currentTime >= 750)), 'Offscreen sprite animations must retain their frame times');
     await page.locator('.PepoPunch').evaluate(node => node.getAnimations().forEach(animation => animation.currentTime = 4500));
     await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await page.waitForTimeout(200);
-    await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+    await readAt(0); await page.waitForTimeout(200);
     assert.equal(await page.locator('.PepoPunch').evaluate(node => node.getAnimations().length), 0, 'Finished finite animations must stay finished after scrolling');
-    await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+    await readAt(0); await page.waitForTimeout(200);
     // A separate DOM uses the native formatter structure and unmodified first-party rules.
     const oracle = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 });
     await oracle.route(/^https:\/\//, async route => route.fulfill(await fetch(route.request().url())));
@@ -222,7 +229,7 @@ const execFile = promisify(require('node:child_process').execFile);
 
     const history = Array.from({ length: 500 }, (_, index) => ({ id: 'history-' + index, html: `<span class="text">Message ${index}</span>`, classes: 'msg-chat msg-user', username: 'test', accessibility: 'history' }));
     await page.evaluate(rows => ChatRenderer.update({ records: rows, ids: rows.map(row => row.id) }), history);
-    await page.evaluate(() => window.scrollTo(0, 1500)); await page.waitForTimeout(100);
+    await readAt(1500); await page.waitForTimeout(100);
     const anchor = await page.evaluate(() => { const node = document.elementFromPoint(12, 2).closest('[data-message]'); return { id: node.dataset.message, y: node.getBoundingClientRect().y }; });
     await page.evaluate(ids => ChatRenderer.update({ records: [], ids }), history.slice(20).map(row => row.id));
     assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1, 'History pruning must preserve the reading position');
@@ -252,6 +259,44 @@ const execFile = promisify(require('node:child_process').execFile);
     await page.evaluate(() => ChatRenderer.update({ active: true }));
     await page.waitForFunction(() => !document.getElementById('content').style.paddingTop);
     assert(Math.abs(await page.locator(`[data-message="${anchor.id}"]`).evaluate(node => node.getBoundingClientRect().y) - anchor.y) < 1, 'Foregrounding releases retained space without losing the anchor');
+    const followingEvents = () => page.evaluate(() => events.filter(event => event.action === 'following'));
+    assert.equal((await followingEvents()).at(-1).value, false, 'Reading old messages reports the canonical scroll state');
+    await page.evaluate(() => {
+      const immediate=window.scrollTo.bind(window);
+      window.restoreImmediateScroll=()=>{window.scrollTo=immediate};
+      window.scrollTo=(...args)=>setTimeout(()=>immediate(...args),40);
+      ChatRenderer.scrollToBottom();
+    });
+    for (let batch = 0; batch < 12; batch++) {
+      const row = { id: 'during-jump-' + batch, html: `<span class="text">Live ${batch}</span>`, classes: 'msg-chat msg-user', username: 'test' };
+      await page.evaluate(record => ChatRenderer.update({ records: [record], ids: [...document.querySelectorAll('[data-message]')].map(node => node.dataset.message).concat(record.id) }), row);
+      await page.waitForTimeout(25);
+    }
+    await page.waitForFunction(() => Math.abs(document.scrollingElement.scrollHeight - innerHeight - scrollY) < 2);
+    await page.waitForFunction(() => events.filter(event=>event.action==='following').at(-1)?.value===true);
+    await page.evaluate(() => restoreImmediateScroll());
+    assert.equal((await followingEvents()).at(-1).value, true, 'The jump reaches the latest arrivals and resumes following');
+    await readAt(800); await page.waitForTimeout(50);
+    const beforeIdle = (await followingEvents()).length;
+    await page.evaluate(() => ChatRenderer.update({ records: [] }));
+    assert.equal((await followingEvents()).length, beforeIdle, 'Unchanged scroll state sends no redundant native messages');
+    await page.evaluate(() => ChatRenderer.scrollToBottom());
+    await page.waitForTimeout(35);
+    await page.evaluate(() => { window.dispatchEvent(new PointerEvent('pointerdown')); window.scrollTo(0, 600); window.dispatchEvent(new PointerEvent('pointerup')); });
+    await page.waitForTimeout(300);
+    assert(Math.abs(await page.evaluate(() => scrollY) - 600) < 1, 'Touch scrolling cancels the jump immediately');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const writesBeforeSnap = await page.evaluate(() => { const count=ChatRenderer.metrics().scrollWrites; ChatRenderer.scrollToBottom(); return count; });
+    await page.waitForFunction(() => Math.abs(document.scrollingElement.scrollHeight - innerHeight - scrollY) < 2);
+    assert.equal(await page.evaluate(() => ChatRenderer.metrics().scrollWrites), writesBeforeSnap + 1, 'Reduce Motion uses one immediate scroll');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await readAt(600); await page.waitForTimeout(50);
+    const neighbor = await page.evaluate(() => {
+      const original=document.elementFromPoint(12,2).closest('[data-message]'), next=original.nextElementSibling;
+      return { removed: original.dataset.message, id: next.dataset.message, top: next.getBoundingClientRect().top };
+    });
+    await page.evaluate(removed => ChatRenderer.update({ records: [], ids: [...document.querySelectorAll('[data-message]')].map(node=>node.dataset.message).filter(id=>id!==removed) }), neighbor.removed);
+    assert(Math.abs(await page.locator(`[data-message="${neighbor.id}"]`).evaluate(node => node.getBoundingClientRect().top) - neighbor.top) < 1, 'Removing the reading anchor preserves its nearest retained neighbor');
     await page.route('https://assets.streamstiny.invalid/preview.png', route => route.fulfill(fixture));
     const preview = { id: 'preview', html: '<img class="preview not-visible" width="200" height="120" data-resource="https://assets.streamstiny.invalid/preview.png">', classes: 'msg-chat msg-user', username: 'test', accessibility: 'preview' };
     await page.evaluate(record => ChatRenderer.update({ records: [record], ids: [record.id] }), preview);

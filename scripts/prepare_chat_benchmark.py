@@ -38,6 +38,8 @@ for path in names:
         text = text.replace("            bitrateInput = input", "            ChatBenchmarkMetrics.bitrateSamples += 1\n            bitrateInput = input")
     (source / path.name).write_text(text)
 host = Path("Benchmarks/Chat/Host.swift").read_text()
+button = "true" if "chatScrollToBottom" in (source / "ChatList.swift").read_text() else "false"
+host = host.replace("  static var requests = 0", f"  static let hasScrollToBottom = {button}\n  static var requests = 0")
 if include_player:
     start = host.index("enum PlaybackResolver {")
     end = host.index("@MainActor enum ChatBenchmarkMetrics", start)
@@ -73,7 +75,7 @@ else:
 }\n''')
 (source / "Host.swift").write_text(host)
 for path in production.glob("Chat*.js"):
-    text = path.read_text().replace("!matchMedia('(prefers-reduced-motion: reduce)').matches", "true")
+    text = path.read_text().replace("!matchMedia('(prefers-reduced-motion: reduce)').matches", "true").replace("const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches", "const reducedMotion = false")
     (source / path.name).write_text(text)
 shutil.copy("Benchmarks/Chat/ChatBenchmarkTests.swift", root)
 shutil.copy("Benchmarks/Chat/NativeEmoteChecks.swift", root)

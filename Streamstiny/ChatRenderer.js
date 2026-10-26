@@ -14,24 +14,54 @@
   let recovery = 0, retryVersion = 0;
   let rowWidth = window.innerWidth;
   let touching = false, wheelUntil = 0, retiredHeight = 0, retireTimer = 0;
+  let scrollAnimation = 0, pendingPin = false;
   const stats = { updates: 0, inserted: 0, replaced: 0, removed: 0, pickerBuilds: 0, assetFailures: 0, scrollWrites: 0 };
   const send = data => window.webkit?.messageHandlers?.chat?.postMessage(data);
   const proxy = address => address.replace(/^https:/, 'dgg-asset:');
   const allows = item => account.privileged || (item.patreonOnly ? account.patreonMember : item.minimumSubTier <= (account.tier || 0));
   const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const bottomOffset = viewport => Math.max(0, viewport.scrollHeight - viewport.clientHeight);
 
-  function rememberAnchor() {
+  function rememberAnchor(scrolled = false) {
     const viewport = document.scrollingElement;
-    following = viewport.scrollHeight - viewport.scrollTop - window.innerHeight <= 60;
+    const distance = bottomOffset(viewport) - viewport.scrollTop;
+    // WKWebView can acknowledge scrollTo after the next message update. Keep
+    // that request's intent until it reaches the bottom or the user intervenes.
+    if (pendingPin && (!scrolled || Math.abs(distance) > 1)) return;
+    pendingPin = false;
+    const next = distance <= 60;
+    if (next !== following) {
+      following = next;
+      if (mode === 'chat') send({ action: 'following', value: following });
+    }
     if (following) { anchor = null; return; }
     const node = document.elementFromPoint(12, 2)?.closest('[data-message]');
     if (node) anchor = { id: node.dataset.message, top: node.getBoundingClientRect().top };
   }
-  function restoreAnchor(saved, follow = following) {
+  function cancelScroll() { cancelAnimationFrame(scrollAnimation); scrollAnimation = 0; pendingPin = false; }
+  function scrollToBottom() {
+    if (!active || mode !== 'chat') return;
+    cancelScroll();
+    const viewport = document.scrollingElement, start = viewport.scrollTop, began = performance.now();
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    function step(now) {
+      const progress = reducedMotion ? 1 : Math.max(0, Math.min(1, (now - began) / 250));
+      const target = start + (bottomOffset(viewport) - start) * (1 - (1 - progress) ** 3);
+      if (progress === 1 && Math.abs(target - viewport.scrollTop) > 0.5) pendingPin = true;
+      stats.scrollWrites++;
+      window.scrollTo(0, target);
+      if (progress < 1) scrollAnimation = requestAnimationFrame(step);
+      else { scrollAnimation = 0; rememberAnchor(); }
+    }
+    scrollAnimation = requestAnimationFrame(step);
+  }
+  function restoreAnchor(saved, follow = following || pendingPin) {
     if (follow) {
       const viewport = document.scrollingElement;
-      if (Math.abs(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop) > 0.5) {
-        stats.scrollWrites++; window.scrollTo(0, viewport.scrollHeight);
+      const bottom = bottomOffset(viewport);
+      if (Math.abs(bottom - viewport.scrollTop) > 0.5) {
+        pendingPin = true;
+        stats.scrollWrites++; window.scrollTo(0, bottom);
       }
     }
     else if (saved) {
@@ -44,25 +74,25 @@
     clearTimeout(retireTimer);
     retireTimer = setTimeout(() => {
       retireTimer = 0;
-      if (touching || !retiredHeight) return;
+      if (touching || scrollAnimation || !retiredHeight) return;
       rememberAnchor();
       const saved = anchor;
       retiredHeight = 0; content.style.paddingTop = '';
       restoreAnchor(saved); rememberAnchor();
     }, 120);
   }
-  window.addEventListener('pointerdown', () => { touching = true; }, { passive: true });
+  window.addEventListener('pointerdown', () => { cancelScroll(); touching = true; }, { passive: true });
   for (const event of ['pointerup', 'pointercancel']) window.addEventListener(event, () => {
     touching = false; if (retiredHeight) releaseRetiredRows();
   }, { passive: true });
-  window.addEventListener('wheel', () => { wheelUntil = performance.now() + 120; }, { passive: true });
+  window.addEventListener('wheel', () => { cancelScroll(); wheelUntil = performance.now() + 120; }, { passive: true });
   window.addEventListener('scroll', () => {
-    rememberAnchor(); if (retiredHeight) releaseRetiredRows();
+    rememberAnchor(true); if (retiredHeight) releaseRetiredRows();
   }, { passive: true });
   window.addEventListener('resize', () => requestAnimationFrame(() => {
     if (mode !== 'badges') {
       if (rowWidth !== window.innerWidth) { rowWidth = window.innerWidth; restoreRows(); }
-      restoreAnchor(anchor);
+      if (!scrollAnimation && !touching && performance.now() >= wheelUntil) restoreAnchor(anchor);
     }
   }));
   new ResizeObserver(() => {
@@ -233,6 +263,7 @@
     }
   }
   function clear() {
+    cancelScroll();
     clearTimeout(retireTimer); retireTimer = 0; retiredHeight = 0; content.style.paddingTop = '';
     rows.disconnect(); forget(content); content.replaceChildren(); records.clear(); pickerSignature = ''; profileSignature = '';
   }
@@ -301,6 +332,7 @@
     active = value;
     document.documentElement.classList.toggle('paused', !active);
     if (!active) {
+      cancelScroll();
       touching = false; wheelUntil = 0;
       clearTimeout(retireTimer); retireTimer = 0;
     } else if (retiredHeight) releaseRetiredRows();
@@ -316,8 +348,9 @@
   }
 
   function updateChat(data) {
-    const interacting = data.interacting || touching || performance.now() < wheelUntil;
-    const follow = following && !interacting;
+    if (data.interacting) cancelScroll();
+    const interacting = data.interacting || touching || scrollAnimation !== 0 || performance.now() < wheelUntil;
+    const follow = (following || pendingPin) && !interacting;
     if (interacting) rememberAnchor();
     let saved = anchor;
     const desired = data.ids ? new Set(data.ids) : null;
@@ -336,10 +369,14 @@
       }
     }
     if (saved && desired && !desired.has(saved.id)) {
-      const previous = [...content.children].map(node => node.dataset.message);
-      const retained = new Set(data.ids), index = previous.indexOf(saved.id);
-      const id = previous.slice(index).find(id => retained.has(id)) || previous.slice(0, index).reverse().find(id => retained.has(id));
-      saved = id ? { id, top: records.get(id).node.getBoundingClientRect().top } : null;
+      const original = records.get(saved.id)?.node;
+      let next = original;
+      while (next && !desired.has(next.dataset.message)) next = next.nextElementSibling;
+      if (!next) {
+        next = original?.previousElementSibling;
+        while (next && !desired.has(next.dataset.message)) next = next.previousElementSibling;
+      }
+      saved = next ? { id: next.dataset.message, top: next.getBoundingClientRect().top } : null;
     }
     for (const record of data.records || []) {
       let item = records.get(record.id);
@@ -384,7 +421,7 @@
         cursor = node.nextElementSibling;
       }
     }
-    restoreAnchor(saved, follow);
+    if (!scrollAnimation) restoreAnchor(saved, follow);
     rememberAnchor();
   }
   function updatePicker() {
@@ -492,6 +529,6 @@
   content.addEventListener('pointermove', event => {
     if (startPoint && Math.hypot(event.clientX - startPoint[0], event.clientY - startPoint[1]) > 8) clearTimeout(holdTimer);
   }, { passive: true });
-  window.ChatRenderer = { update, setSearch, assetFinished, metrics: () => ({ ...stats, nodes: records.size, mounted: [...records.values()].filter(item => !item.fragment).length, resources: resources.size, decoded: decoded.size }) };
+  window.ChatRenderer = { update, setSearch, assetFinished, scrollToBottom, metrics: () => ({ ...stats, nodes: records.size, mounted: [...records.values()].filter(item => !item.fragment).length, resources: resources.size, decoded: decoded.size }) };
   send({ action: 'ready' });
 })();

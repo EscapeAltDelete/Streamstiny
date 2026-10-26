@@ -253,7 +253,7 @@ import WebKit
     throw URLError(.timedOut)
   }
   func browserFrames(_ web: WKWebView) async throws -> [String: Double] {
-    let script = "window.benchmarkRunning=false;const t=window.benchmarkFrames,g=t.slice(1).map((v,i)=>v-t[i]).sort((a,b)=>a-b);return {browser_frames:t.length,browser_fps:t.length>1?(t.length-1)*1000/(t[t.length-1]-t[0]):0,browser_p95_frame_ms:g[Math.min(g.length-1,Math.floor(g.length*.95))]||0,browser_max_frame_ms:g[g.length-1]||0};"
+    let script = "window.benchmarkRunning=false;const t=window.benchmarkFrames,g=t.slice(1).map((v,i)=>v-t[i]).sort((a,b)=>a-b);return {bottom_distance_px:document.scrollingElement.scrollHeight-document.scrollingElement.clientHeight-document.scrollingElement.scrollTop,browser_frames:t.length,browser_fps:t.length>1?(t.length-1)*1000/(t[t.length-1]-t[0]):0,browser_p95_frame_ms:g[Math.min(g.length-1,Math.floor(g.length*.95))]||0,browser_max_frame_ms:g[g.length-1]||0};"
     return try await javascript(web, script)
   }
 }

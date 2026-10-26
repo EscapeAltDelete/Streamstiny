@@ -20,7 +20,6 @@ enum ChatPreferences {
   @MainActor static var customHighlights: [String] { textRules.customHighlights }
   @MainActor static func highlighted(_ text: String) -> Bool { textRules.highlighted(text) }
   @MainActor static func sensitive(_ text: String) -> Bool { textRules.sensitive(text) }
-  @MainActor static func censored(_ text: String) -> String { textRules.censored(text) }
   // Merge supported native preferences into the existing website settings,
   // retaining keys that this client does not own.
   private static let mapping: [(web: String, native: String, inverted: Bool)] = [
