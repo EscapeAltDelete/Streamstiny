@@ -1,75 +1,75 @@
 import SwiftUI
-import UIKit
 
-struct StreamMenu: UIViewRepresentable {
+struct StreamMenu: View {
   let library: StreamLibrary
   let controls: PlaybackControls
   let addStream: () -> Void
+  @AppStorage("enableStreamPinning") private var enablePinning = true
 
-  func makeUIView(context: Context) -> StreamMenuButton {
-    let button = StreamMenuButton(type: .system)
-    button.setImage(UIImage(systemName: "line.3.horizontal"), for: .normal)
-    button.tintColor = .white
-    button.accessibilityLabel = "Choose stream"
-    button.showsMenuAsPrimaryAction = true
-    return button
-  }
-
-  func updateUIView(_ button: StreamMenuButton, context: Context) {
-    button.presented = { controls.menuPresented = $0 }
-    guard !controls.menuPresented else { return }
-    let directory = library.directory
-    let sameEntries = button.directory.elementsEqual(directory) {
-      $0.source == $1.source && $0.name == $1.name
+  var body: some View {
+    @Bindable var controls = controls
+    Button { controls.menuPresented = true } label: {
+      Image(systemName: "line.3.horizontal").frame(width: 44, height: 44)
     }
-    guard button.currentSource != library.selected || !sameEntries else { return }
-    button.currentSource = library.selected
-    button.directory = directory
-    let entries: [UIMenuElement] = directory.filter { $0.id != library.selected.id }.map { item in
-      UIAction(
-        title: item.name, subtitle: item.source.provider.rawValue, image: UIImage(systemName: "play.rectangle")
-      ) { _ in
-        library.select(item.source)
+    .accessibilityLabel("Choose stream")
+    .popover(isPresented: $controls.menuPresented, arrowEdge: .top) {
+      NavigationStack {
+        List {
+          Section("Now Playing") {
+            row(library.selected, name: library.name(for: library.selected))
+          }
+          let pinned = enablePinning ? library.pinned.filter { $0.id != library.selected.id } : []
+          if !pinned.isEmpty {
+            Section("Pinned") {
+              ForEach(pinned) { item in row(item.source, name: library.name(for: item.source)) }
+            }
+          }
+          let pinnedIDs = enablePinning ? Set(library.pinned.map(\.id)) : []
+          let live = library.directory.filter { $0.id != library.selected.id && !pinnedIDs.contains($0.id) }
+          if !live.isEmpty {
+            Section("Live streams") {
+              ForEach(live) { item in row(item.source, name: item.name) }
+            }
+          }
+          Button {
+            controls.menuPresented = false
+            addStream()
+          } label: { Label("Add stream", systemImage: "plus") }
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Streams").navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { controls.menuPresented = false } } }
       }
+      .frame(idealWidth: 360, idealHeight: 480)
+      .presentationCompactAdaptation(.popover)
+      .tint(.blue)
+      .foregroundStyle(Color.primary)
     }
-    let current = UIAction(title: library.selected.title, image: UIImage(systemName: "play.fill"), state: .on) { _ in }
-    let add = UIAction(title: "Add stream", image: UIImage(systemName: "plus")) { _ in addStream() }
-    button.menu = UIMenu(children: [
-      UIMenu(title: "Now playing", options: .displayInline, children: [current]),
-      UIMenu(title: "Live streams", options: .displayInline, children: entries),
-      UIMenu(options: .displayInline, children: [add]),
-    ])
   }
 
-  static func dismantleUIView(_ button: StreamMenuButton, coordinator: ()) {
-    button.presented?(false)
-    button.presented = nil
-    button.menu = nil
-  }
-}
-
-final class StreamMenuButton: UIButton {
-  var presented: ((Bool) -> Void)?
-  var currentSource: StreamSource?
-  var directory: [DirectoryItem] = []
-  override func contextMenuInteraction(
-    _ interaction: UIContextMenuInteraction,
-    willDisplayMenuFor configuration: UIContextMenuConfiguration,
-    animator: UIContextMenuInteractionAnimating?
-  ) {
-    super.contextMenuInteraction(interaction, willDisplayMenuFor: configuration, animator: animator)
-    presented?(true)
-  }
-  override func contextMenuInteraction(
-    _ interaction: UIContextMenuInteraction,
-    willEndFor configuration: UIContextMenuConfiguration,
-    animator: UIContextMenuInteractionAnimating?
-  ) {
-    super.contextMenuInteraction(interaction, willEndFor: configuration, animator: animator)
-    if let animator {
-      animator.addCompletion { [weak self] in self?.presented?(false) }
-    } else {
-      presented?(false)
-    }
+  private func row(_ source: StreamSource, name: String) -> some View {
+    HStack {
+      Button {
+        library.select(source)
+        controls.menuPresented = false
+      } label: {
+        HStack {
+          VStack(alignment: .leading) {
+            Text(name).foregroundStyle(.primary).multilineTextAlignment(.leading)
+            Text(source.provider.rawValue).font(.caption).foregroundStyle(.secondary)
+          }
+          Spacer()
+          Image(systemName: source.id == library.selected.id ? "play.fill" : "play.rectangle")
+        }.contentShape(Rectangle())
+      }.accessibilityLabel("Play " + name)
+      if enablePinning {
+        let pinned = library.pinned.contains { $0.id == source.id }
+        Button { library.togglePin(source) } label: {
+          Image(systemName: pinned ? "pin.fill" : "pin").frame(width: 44, height: 44)
+        }
+        .accessibilityLabel((pinned ? "Unpin " : "Pin ") + name)
+        .accessibilityIdentifier("pin-" + source.id)
+      }
+    }.buttonStyle(.borderless)
   }
 }

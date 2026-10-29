@@ -35,8 +35,11 @@ for path in names:
       let refreshStarted = ProcessInfo.processInfo.systemUptime
       defer { ChatBenchmarkMetrics.refreshTimes.append((ProcessInfo.processInfo.systemUptime - refreshStarted) * 1000) }""", 1)
     if include_player and path.name == "PlayerView.swift":
-        text = text.replace("            bitrateInput = input", "            ChatBenchmarkMetrics.bitrateSamples += 1\n            bitrateInput = input")
+        text = text.replace("        let value = StreamBitrate(Int64(engine.dynamicInfo?.videoBitrate ?? 0))", "        ChatBenchmarkMetrics.bitrateSamples += 1\n        let value = StreamBitrate(Int64(engine.dynamicInfo?.videoBitrate ?? 0))")
     (source / path.name).write_text(text)
+# Drive directory fixtures through the canonical consumer without a real socket.
+with (source / "StreamDirectory.swift").open("a") as output:
+    output.write('\n@MainActor extension StreamLibrary { func benchmarkConsume(_ event: DirectoryEvent) { connected = true; consume(event) } }\n')
 host = Path("Benchmarks/Chat/Host.swift").read_text()
 button = "true" if "chatScrollToBottom" in (source / "ChatList.swift").read_text() else "false"
 host = host.replace("  static var requests = 0", f"  static let hasScrollToBottom = {button}\n  static var requests = 0")

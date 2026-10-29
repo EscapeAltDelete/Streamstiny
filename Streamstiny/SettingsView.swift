@@ -42,6 +42,7 @@ struct PlaybackPreferencesView: View {
   @AppStorage("showViewers") private var showViewers = false
   @AppStorage("showDGGViewers") private var showDGGViewers = false
   @AppStorage("showBitrate") private var showBitrate = false
+  @AppStorage("enableStreamPinning") private var enablePinning = true
   var body: some View {
     Form {
       Section {
@@ -51,6 +52,9 @@ struct PlaybackPreferencesView: View {
         }.disabled(!automaticCatchUp)
       } header: { Text("Live buffer") } footer: {
         Text("Speeds up to 2× when the live buffer is above your target, then returns to normal.")
+      }
+      Section("Streams") {
+        Toggle("Enable Stream Pinning", isOn: $enablePinning)
       }
       Section("Quality") {
         Toggle("Start at highest quality", isOn: $highestQuality)

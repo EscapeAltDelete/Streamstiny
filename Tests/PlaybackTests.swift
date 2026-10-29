@@ -55,18 +55,11 @@ import Foundation
     precondition(!PlaybackStatus.recoverable(CancellationError()))
     precondition(PlaybackStatus.recovering.error == nil && PlaybackStatus.buffering.error == nil)
     precondition(PlaybackStatus.ended.error == "This stream has ended.")
-    precondition(StreamBitrate(6_250_000)?.label == "6.25 Mbps")
+    precondition(StreamBitrate(6_250_000)?.label == "6250 kbps")
     precondition(StreamBitrate(128_000)?.label == "128 kbps")
-    var advertised = ranked[3]
-    advertised.averageBandwidth = 10_000_000
-    let fixed = StreamBitrate.advertised(variants: [advertised], selectedID: advertised.id,
-      width: 1920, height: 1080, frameRate: 60, trackBitrate: 0)
-    precondition(fixed?.label == "10.00 Mbps" && fixed?.title == "Advertised average bitrate",
-      "Fixed rendition metadata works even when the decoder has no track bitrate")
-    precondition(StreamBitrate.advertised(variants: [advertised], selectedID: nil,
-      width: 1920, height: 1080, frameRate: 60, trackBitrate: 12_000_000) == fixed)
-    precondition(StreamBitrate.advertised(variants: [advertised], selectedID: nil,
-      width: 1280, height: 720, frameRate: 60, trackBitrate: 0) == nil)
+    precondition(StreamBitrate(1_234_000)?.label == "1234 kbps")
+    precondition(StreamBitrate(128_000)?.title == "Estimated video bitrate")
+    precondition(StreamBitrate(6_250_000) != StreamBitrate(4_000_000), "Changing video packet measurements must change the display")
     precondition(StreamBitrate(0) == nil && StreamBitrate(-1) == nil)
     var connectivity = PlaybackConnectivity()
     precondition(!connectivity.update(available: true), "An initial healthy path must not restart CDN retries")

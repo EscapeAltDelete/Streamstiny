@@ -10,6 +10,12 @@ struct DirectoryItem: Identifiable, Equatable, Sendable {
   var id: String { source.id }
 }
 
+struct StreamBookmark: Identifiable, Equatable, Codable, Sendable {
+  let source: StreamSource
+  let name: String
+  var id: String { source.id }
+}
+
 enum DirectoryEvent: Sendable {
   case embeds([DirectoryItem])
   case streams([DirectoryItem])
@@ -93,6 +99,7 @@ enum DirectoryEvent: Sendable {
   private(set) var banned: [String: String] = [:]
   private(set) var connected = false
   private(set) var directory: [DirectoryItem] = []
+  private(set) var pinned: [StreamBookmark] = []
   private let connection = DestinySocket(url: URL(string: "wss://live.destiny.gg")!)
   private var worker: Task<Void, Never>?
   private var stopping = false
@@ -112,7 +119,14 @@ enum DirectoryEvent: Sendable {
       .flatMap { try? JSONDecoder().decode(StreamSource.self, from: $0) }
     selected = last ?? StreamSource.initial
     chooseInitialLive = last == nil
-
+    if let data = defaults.data(forKey: "pinnedStreams"),
+      let saved = try? JSONDecoder().decode([StreamBookmark].self, from: data) {
+      var seen: Set<String> = []
+      pinned = saved.filter {
+        (try? StreamSource.parse($0.source.key, provider: $0.source.provider))?.id == $0.id
+          && seen.insert($0.id).inserted
+      }
+    }
   }
   func dggViewerCount(for source: StreamSource) -> Int? {
     guard connected else { return nil }
@@ -127,6 +141,20 @@ enum DirectoryEvent: Sendable {
     }
     return embeds.first { $0.id == source.id }?.viewers
       ?? (hosting?.id == source.id ? hosting?.viewers : nil)
+  }
+
+  func name(for source: StreamSource) -> String {
+    directory.first { $0.id == source.id }?.name
+      ?? pinned.first { $0.id == source.id }?.name ?? source.title
+  }
+
+  func togglePin(_ source: StreamSource) {
+    if let index = pinned.firstIndex(where: { $0.id == source.id }) {
+      pinned.remove(at: index)
+    } else {
+      pinned.append(StreamBookmark(source: source, name: name(for: source)))
+    }
+    if let data = try? JSONEncoder().encode(pinned) { defaults.set(data, forKey: "pinnedStreams") }
   }
 
   func select(_ source: StreamSource) {

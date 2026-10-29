@@ -25,9 +25,6 @@ import SwiftUI
   private var reportsBitrate = false
   private var informationVisible = false
   private var nextBitrateCheck = 0.0
-  @ObservationIgnored private var bitrateInput: StreamBitrate.Input?
-  @ObservationIgnored private var bitrateTask: Task<Void, Never>?
-  private(set) var frameRate: Float = 0
   private(set) var buffered = 0.0
   private(set) var waitingForAds = false
   private(set) var catchingUp = false
@@ -68,7 +65,7 @@ import SwiftUI
   private var wantsPlayback = true
   private var commands: [PlaybackCommandTarget] = []
 
-  deinit { network?.cancel(); retry?.cancel(); stall?.cancel(); bitrateTask?.cancel() }
+  deinit { network?.cancel(); retry?.cancel(); stall?.cancel() }
 
   var pipActive: Bool { hls?.engine.pipController?.isPictureInPictureActive == true }
 
@@ -112,7 +109,6 @@ import SwiftUI
     title = source.title
     status = .connecting
     clearBitrate()
-    frameRate = 0
     nextBitrateCheck = 0
     healthySince = nil
     if !force {
@@ -242,6 +238,7 @@ import SwiftUI
   }
 
   func setInformationVisible(_ visible: Bool) {
+    guard informationVisible != visible else { return }
     informationVisible = visible
     nextBitrateCheck = 0
     if !visible { clearBitrate() }
@@ -389,7 +386,6 @@ import SwiftUI
     resolution = ""
     clearBitrate()
     buffered = 0
-    frameRate = 0
     settingsError = nil
     title = ""
     wantsPlayback = false
@@ -496,23 +492,13 @@ import SwiftUI
       playbackRate = playing ? engine.playbackRate : 0
       let size = engine.naturalSize
       resolution = size.height > 0 ? "\(Int(size.width)) × \(Int(size.height))" : ""
-      if informationVisible, !loading, !switching, engine.isReadyToPlay,
+      if informationVisible, reportsBitrate, !loading, !switching, engine.isReadyToPlay,
         ProcessInfo.processInfo.systemUptime >= nextBitrateCheck {
         nextBitrateCheck = ProcessInfo.processInfo.systemUptime + 1
-        let video = engine.tracks(mediaType: .video).first { $0.isEnabled }
-        if frameRate != (video?.nominalFrameRate ?? 0) { frameRate = video?.nominalFrameRate ?? 0 }
-        if reportsBitrate, playlistGateway?.usingBackup != true, let video {
-          let input = StreamBitrate.Input(variants: variants, selectedID: qualityID,
-            width: Int(size.width), height: Int(size.height), frameRate: Double(video.nominalFrameRate), trackBitrate: video.bitRate)
-          if input != bitrateInput {
-            bitrateInput = input
-            bitrateTask?.cancel()
-            bitrateTask = Task.detached(priority: .utility) { [weak self] in
-              let value = input.value
-              await self?.acceptBitrate(value, input: input)
-            }
-          }
-        } else { clearBitrate() }
+        // KSPlayer already divides compressed video packet bytes by media time.
+        // This excludes audio/container bytes and is not download throughput.
+        let value = StreamBitrate(Int64(engine.dynamicInfo?.videoBitrate ?? 0))
+        if bitrate != value { bitrate = value }
       }
       if let controller = engine.pipController, controller.delegate !== self {
         controller.delegate = self
@@ -530,14 +516,7 @@ import SwiftUI
   }
 
   private func clearBitrate() {
-    bitrateTask?.cancel(); bitrateTask = nil
-    bitrateInput = nil
     bitrate = nil
-  }
-  private func acceptBitrate(_ value: StreamBitrate?, input: StreamBitrate.Input) {
-    guard !Task.isCancelled, informationVisible, reportsBitrate, bitrateInput == input else { return }
-    bitrateTask = nil
-    if bitrate != value { bitrate = value }
   }
 
   private func updateNowPlaying() {
@@ -652,6 +631,7 @@ struct PlayerView: View {
   let playback: NativePlayback
   let controls: PlaybackControls
   let library: StreamLibrary
+  var statisticsObscured = false
   let addStream: () -> Void
   let toggleChat: () -> Void
   @Environment(\.scenePhase) private var scenePhase
@@ -662,8 +642,6 @@ struct PlayerView: View {
   @AppStorage("automaticCatchUp") private var automaticCatchUp = false
   @AppStorage("targetBuffer") private var targetBuffer = 3.0
   @AppStorage("highestQuality") private var highestQuality = false
-  @AppStorage("showViewers") private var showViewers = false
-  @AppStorage("showDGGViewers") private var showDGGViewers = false
   @AppStorage("showBitrate") private var showBitrate = false
 
   var body: some View {
@@ -707,7 +685,7 @@ struct PlayerView: View {
     }
     .animation(.easeOut(duration: 0.12), value: controls.visible)
     .background(.black)
-    .sheet(isPresented: $controls.settingsPresented) { PlaybackSettings(playback: playback, source: source, library: library) }
+    .sheet(isPresented: $controls.settingsPresented) { PlaybackSettings(playback: playback) }
     .task(id: source.id + (blocked ?? "")) {
       configurePlayback()
       if blocked == nil { await playback.load(source) } else { playback.stop() }
@@ -728,6 +706,7 @@ struct PlayerView: View {
     .onChange(of: targetBuffer) { _, _ in configurePlayback() }
     .onChange(of: highestQuality) { _, _ in configurePlayback() }
     .onChange(of: showBitrate) { _, _ in configurePlayback() }
+    .onChange(of: statisticsVisible, initial: true) { _, visible in playback.setInformationVisible(visible) }
     .onReceive(NotificationCenter.default.publisher(for: .twitchAccountChanged)) { _ in
       if source.provider == .twitch { playback.reload() }
     }
@@ -740,6 +719,7 @@ struct PlayerView: View {
       }
     }
     .onDisappear {
+      playback.setInformationVisible(false)
       playback.endCatchUp()
       controls.cancel()
       if scenePhase == .active, !playback.pipActive { playback.stop() }
@@ -749,6 +729,10 @@ struct PlayerView: View {
   private func configurePlayback() {
     playback.configure(
       automatic: automaticCatchUp, target: targetBuffer, highest: highestQuality, showBitrate: showBitrate)
+  }
+
+  private var statisticsVisible: Bool {
+    controls.visible && !statisticsObscured && !controls.settingsPresented && !controls.menuPresented && scenePhase == .active
   }
 
   private var speedLabel: String {
@@ -762,16 +746,7 @@ struct PlayerView: View {
         StreamMenu(library: library, controls: controls, addStream: addStream)
           .frame(width: 44, height: 44)
         Spacer()
-        if showDGGViewers, let count = library.dggViewerCount(for: source) {
-          Label("DGG " + count.formatted(), systemImage: "person.2")
-            .font(.caption.monospacedDigit())
-            .accessibilityLabel("\(count) watching through Destiny.gg")
-        }
-        if showViewers, let count = library.viewerCount(for: source) {
-          Label(count.formatted(), systemImage: "eye")
-            .font(.caption.monospacedDigit())
-            .accessibilityLabel("\(count) overall stream viewers")
-        }
+        if statisticsVisible { StreamStatistics(playback: playback, source: source, library: library) }
         Button {
           controls.settingsPresented = true
         } label: {
@@ -792,11 +767,39 @@ struct PlayerView: View {
   }
 }
 
-struct PlaybackSettings: View {
+// Keep changing statistics scoped to this small view, outside the video surface.
+struct StreamStatistics: View {
   let playback: NativePlayback
   let source: StreamSource
   let library: StreamLibrary
+  @AppStorage("showViewers") private var showViewers = false
+  @AppStorage("showDGGViewers") private var showDGGViewers = false
   @AppStorage("showBitrate") private var showBitrate = false
+
+  var body: some View {
+    HStack {
+      if showDGGViewers, let count = library.dggViewerCount(for: source) {
+        Label("DGG " + count.formatted(), systemImage: "person.2")
+          .accessibilityLabel("\(count) watching through Destiny.gg")
+      }
+      if showViewers, let count = library.viewerCount(for: source) {
+        Label(count.formatted(), systemImage: "eye")
+          .accessibilityLabel("\(count) overall stream viewers")
+      }
+      if showBitrate {
+        Label(playback.bitrate.map { "≈ " + $0.label } ?? "— kbps", systemImage: "waveform.path")
+          .accessibilityLabel("Estimated video bitrate: " + (playback.bitrate?.label ?? "Unavailable"))
+          .accessibilityIdentifier("streamBitrate")
+      }
+    }
+    .font(.caption.monospacedDigit())
+    .lineLimit(1).minimumScaleFactor(0.8)
+    .accessibilityElement(children: .contain)
+  }
+}
+
+struct PlaybackSettings: View {
+  let playback: NativePlayback
   @Environment(\.dismiss) private var dismiss
   var body: some View {
     NavigationStack {
@@ -812,29 +815,13 @@ struct PlaybackSettings: View {
             Label("AngelThump server", systemImage: "network")
           }
         }
-        Section("Now playing") {
-          if let count = library.viewerCount(for: source) { LabeledContent("Viewers", value: count.formatted()) }
-          if let count = library.dggViewerCount(for: source) { LabeledContent("DGG viewers", value: count.formatted()) }
-          LabeledContent("Quality", value: playback.variants.first { $0.id == playback.qualityID }?.label ?? "Automatic")
-          if !playback.resolution.isEmpty { LabeledContent("Playing", value: playback.resolution) }
-          if playback.frameRate > 0 { LabeledContent("Framerate", value: playback.frameRate.formatted(.number.precision(.fractionLength(0...2))) + " fps") }
-          if showBitrate {
-            LabeledContent(playback.bitrate?.title ?? "Advertised stream bitrate", value: playback.bitrate?.label ?? "Unavailable")
-              .accessibilityIdentifier("streamBitrate")
-            Text("Playlist bandwidth, including audio and container overhead.")
-              .font(.caption).foregroundStyle(.secondary)
-          }
-          LabeledContent("Buffered", value: playback.buffered.formatted(.number.precision(.fractionLength(1))) + " s")
-          Button { playback.reload() } label: { Label("Reload stream", systemImage: "arrow.clockwise") }
-        }
+        Button { playback.reload() } label: { Label("Reload stream", systemImage: "arrow.clockwise") }
       }
       .listStyle(.insetGrouped)
       .navigationTitle("Playback").navigationBarTitleDisplayMode(.inline)
       .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
     }
     .presentationDetents([.medium, .large]).presentationDragIndicator(.visible)
-    .onAppear { playback.setInformationVisible(true) }
-    .onDisappear { playback.setInformationVisible(false) }
   }
 
   private var resolutionSettings: some View {
@@ -842,6 +829,10 @@ struct PlaybackSettings: View {
       qualityRow("Automatic", id: nil)
       ForEach(playback.variants) { variant in
         qualityRow(variant.label + (variant.externalMedia ? " · limit" : ""), id: variant.id)
+      }
+      Section {
+        if !playback.resolution.isEmpty { LabeledContent("Playing", value: playback.resolution) }
+        LabeledContent("Buffered", value: playback.buffered.formatted(.number.precision(.fractionLength(1))) + " s")
       }
       if playback.discovering { ProgressView("Loading qualities…") }
       else if playback.variants.isEmpty { Text("No selectable qualities").foregroundStyle(.secondary) }

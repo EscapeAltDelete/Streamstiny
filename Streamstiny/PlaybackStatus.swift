@@ -32,46 +32,13 @@ enum PlaybackStatus: Equatable {
 }
 
 struct StreamBitrate: Equatable, Sendable {
-  struct Input: Equatable, Sendable {
-    let variants: [HLSVariant]
-    let selectedID: String?
-    let width: Int
-    let height: Int
-    let frameRate: Double
-    let trackBitrate: Int64
-    var value: StreamBitrate? {
-      StreamBitrate.advertised(variants: variants, selectedID: selectedID, width: width,
-        height: height, frameRate: frameRate, trackBitrate: trackBitrate)
-    }
-  }
   let bitsPerSecond: Int64
-  let average: Bool
-  init?(_ bitsPerSecond: Int64, average: Bool = false) {
+  init?(_ bitsPerSecond: Int64) {
     guard bitsPerSecond > 0 else { return nil }
-    self.bitsPerSecond = bitsPerSecond; self.average = average
+    self.bitsPerSecond = bitsPerSecond
   }
-  var title: String { average ? "Advertised average bitrate" : "Advertised peak bitrate" }
-  var label: String {
-    let value = bitsPerSecond >= 1_000_000
-      ? String(format: "%.2f Mbps", Double(bitsPerSecond) / 1_000_000)
-      : String(format: "%.0f kbps", Double(bitsPerSecond) / 1000)
-    return value
-  }
-  static func advertised(variants: [HLSVariant], selectedID: String?, width: Int, height: Int,
-    frameRate: Double, trackBitrate: Int64) -> StreamBitrate? {
-    let selected = variants.first { $0.id == selectedID }
-    let candidates: [HLSVariant]
-    if let selected, !selected.externalMedia { candidates = [selected] }
-    else {
-      candidates = variants.filter {
-        ($0.width == width && $0.height == height && ($0.frameRate == 0 || abs($0.frameRate - frameRate) < 1))
-          || ($0.isSource && $0.bandwidth == Double(trackBitrate) && trackBitrate > 0)
-      }
-    }
-    let matched = candidates.filter { $0.bandwidth == Double(trackBitrate) && trackBitrate > 0 }
-    guard let variant = matched.count == 1 ? matched.first : candidates.count == 1 ? candidates.first : nil else { return nil }
-    return StreamBitrate(Int64(variant.averageBandwidth ?? variant.bandwidth), average: variant.averageBandwidth != nil)
-  }
+  var title: String { "Estimated video bitrate" }
+  var label: String { String(format: "%.0f kbps", Double(bitsPerSecond) / 1000) }
 }
 
 struct PlaybackConnectivity {

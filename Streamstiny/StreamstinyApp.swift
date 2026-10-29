@@ -56,6 +56,7 @@ struct ContentView: View {
         PlayerView(
           source: library.selected, blocked: library.banned[library.selected.id],
           doubleTapEnabled: landscape, playback: playback, controls: controls, library: library,
+          statisticsObscured: settings || sources || chatTools || emotePicker || chat.requestedProfile != nil || chat.error != nil,
           addStream: { sources = true }
         ) { showChat.toggle() }
         .frame(
