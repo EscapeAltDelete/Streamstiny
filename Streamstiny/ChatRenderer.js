@@ -107,17 +107,18 @@
     observe(item.node);
   }
   const rows = new IntersectionObserver(entries => {
-    const changes = entries.flatMap(entry => {
+    const changes = [], saving = new Map(), restoring = new Map();
+    for (const entry of entries) {
       const item = records.get(entry.target.dataset.message);
-      if (!item || !entry.target.isConnected) return [];
-      if (entry.isIntersecting && !item.fragment) { item.seen = true; return []; }
-      if (!entry.isIntersecting && item.fragment) return [];
-      return [{ item, visible: entry.isIntersecting, height: entry.boundingClientRect.height }];
-    });
-    // Read animation state before changing layout. Targets remain the same nodes
-    // in the detached fragment, so repeated emotes and pseudo-elements stay distinct.
-    const saving = new Map(changes.filter(({ item, visible }) => !visible && item.seen).map(({ item }) => [item.node, item]));
-    for (const item of saving.values()) item.times = new Map();
+      if (!item || !entry.target.isConnected) continue;
+      if (entry.isIntersecting && !item.fragment) { item.seen = true; continue; }
+      if (!entry.isIntersecting && item.fragment) continue;
+      const visible = entry.isIntersecting;
+      changes.push({ item, visible, height: entry.boundingClientRect.height });
+      if (!visible && item.seen) { item.times = new Map(); saving.set(item.node, item); }
+      else if (visible && item.times) restoring.set(item.node, item);
+    }
+    // Preserve animated emote timing across row detachment and restoration.
     if (saving.size) for (const animation of content.getAnimations({ subtree: true })) {
       const item = saving.get(animation.effect.target.closest('[data-message]'));
       if (item) {
@@ -135,7 +136,6 @@
         item.fragment.append(...item.node.childNodes);
       }
     }
-    const restoring = new Map(changes.filter(({ item, visible }) => visible && item.times).map(({ item }) => [item.node, item]));
     if (restoring.size) for (const animation of content.getAnimations({ subtree: true })) {
       const item = restoring.get(animation.effect.target.closest('[data-message]'));
       if (item) {
