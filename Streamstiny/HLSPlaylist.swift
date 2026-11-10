@@ -23,12 +23,11 @@ struct HLSVariant: Identifiable, Equatable, Sendable {
 }
 
 enum HLSPlaylist {
-  private static let attributePattern = try? NSRegularExpression(
+  private static let attributePattern = try! NSRegularExpression(
     pattern: #"([A-Z0-9-]+)=("[^"]*"|[^,\r\n]*)"#)
   static func attributes(_ line: String) -> [String: String] {
-    guard let regex = attributePattern else { return [:] }
     var result: [String: String] = [:]
-    for match in regex.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+    for match in attributePattern.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
       guard let key = Range(match.range(at: 1), in: line),
         let value = Range(match.range(at: 2), in: line)
       else { continue }
@@ -103,12 +102,12 @@ enum HLSLowLatency {
     }
   }
   static func expand(_ text: String, provider: StreamSource.Provider = .twitch) -> String {
-    guard provider == .twitch || provider == .kick,
+    let prefetch = provider == .kick ? "#EXT-X-PREFETCH" : "#EXT-X-TWITCH-PREFETCH"
+    guard (provider == .twitch || provider == .kick) && text.contains(prefetch + ":"),
       !text.contains("#EXT-X-ENDLIST"), let playlist = TwitchAdPlaylist(text),
       provider != .twitch || !playlist.hasAds,
       !playlist.segments.contains(where: { $0.encrypted }) else { return text }
-    let prefetch = provider == .kick ? "#EXT-X-PREFETCH" : "#EXT-X-TWITCH-PREFETCH"
-    let duration = playlist.segments.map(\.duration).reduce(0, +) / Double(playlist.segments.count)
+    let duration = playlist.segments.reduce(0) { $0 + $1.duration } / Double(playlist.segments.count)
     var seen = Set(playlist.segments.compactMap { $0.lines.last })
     var lines: [String] = []
     var discontinuity = false

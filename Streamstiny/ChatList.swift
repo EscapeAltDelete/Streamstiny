@@ -34,6 +34,7 @@ struct ChatList: UIViewRepresentable {
     private var revealed: Set<String> = []
     private weak var bottomButton: UIButton?
     private let formatter = DateFormatter()
+    private static let tagColors = ["green":"#34c759", "yellow":"#ffcc00", "orange":"#ff9500", "red":"#ff3b30", "purple":"#af52de", "blue":"#007aff", "sky":"#32ade6", "lime":"#00c7be", "pink":"#ff2d55", "black":"CanvasText"]
     private let announcement = UIImage(systemName: "megaphone.fill")?.withTintColor(.systemBlue, renderingMode: .alwaysOriginal).pngData()?.base64EncodedString()
     private struct RenderContext: Equatable {
       let options: String
@@ -150,8 +151,7 @@ struct ChatList: UIViewRepresentable {
       let badges = user.features.compactMap { name in emotes.flairs.first { $0.name == name } }
       html += "<span class=\"features\">" + badges.map(ChatHTML.flair).joined() + "</span> "
       let color = emotes.flairs.first { user.features.contains($0.name) && ($0.rainbowColor == true || $0.color?.isEmpty == false) }
-      let tagColors = ["green":"#34c759", "yellow":"#ffcc00", "orange":"#ff9500", "red":"#ff3b30", "purple":"#af52de", "blue":"#007aff", "sky":"#32ade6", "lime":"#00c7be", "pink":"#ff2d55", "black":"CanvasText"]
-      let tagColor = input.tagColor.flatMap { tagColors[$0] }
+      let tagColor = input.tagColor.flatMap { Self.tagColors[$0] }
       let title = message.heading ?? message.nick
       if message.kind == "BROADCAST", message.heading == "Announcement", let announcement {
         html += "<img class=\"announcement\" alt=\"\" src=\"data:image/png;base64," + announcement + "\"> "
