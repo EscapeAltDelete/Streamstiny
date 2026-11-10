@@ -23,12 +23,11 @@ struct HLSVariant: Identifiable, Equatable, Sendable {
 }
 
 enum HLSPlaylist {
-  private static let attributePattern = try? NSRegularExpression(
+  private static let attributePattern = try! NSRegularExpression(
     pattern: #"([A-Z0-9-]+)=("[^"]*"|[^,\r\n]*)"#)
   static func attributes(_ line: String) -> [String: String] {
-    guard let regex = attributePattern else { return [:] }
     var result: [String: String] = [:]
-    for match in regex.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
+    for match in attributePattern.matches(in: line, range: NSRange(line.startIndex..., in: line)) {
       guard let key = Range(match.range(at: 1), in: line),
         let value = Range(match.range(at: 2), in: line)
       else { continue }
